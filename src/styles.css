@@ -208,6 +208,9 @@ h1 em { color: #ff4056; font-style: normal; }
 }
 .status-icon.tracking { border-color: #ff4056; }
 .status-icon.tracking span { background: #ff4056; box-shadow: 0 0 18px #ff4056; }
+.status-icon.recovering { border-color: #e3aa6d; }
+.status-icon.recovering span { background: #e3aa6d; box-shadow: 0 0 18px #e3aa6d; animation: recovery-pulse 1.2s ease-in-out infinite; }
+@keyframes recovery-pulse { 50% { opacity: .35; transform: scale(.7); } }
 .status-icon.error { border-color: #ff687b; }
 .status-icon.error span { background: #ff687b; box-shadow: 0 0 18px #ff687b; }
 .status-panel h2 { font: 600 22px 'Space Grotesk'; margin: 0 0 6px; }

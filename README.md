@@ -47,15 +47,18 @@ python backend/server.py
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` and Vite forwards `/api` requests to it. The app reports exercise phase, joint angles, Kinect connection, pose model status, landmark count, and processed FPS. Step back so your full body is visible. The bridge automatically retries capture after a disconnect.
+Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` and Vite forwards `/api` requests to it. The app reports exercise phase, joint angles, Kinect connection, pose model status, landmark count, and processed FPS. Step back so your full body is visible.
 
-Run `npm test` for synthetic movement-cycle and tracking-loss checks. The actual angle thresholds still need calibration with people exercising in front of the Kinect.
+Kinect capture runs in a separate child process. If no frame arrives for more than **5 seconds** (including during startup), the bridge terminates that process and starts a fresh one after **2 seconds**. It repeats until frames return, without restarting the HTTP server. The app shows **Recovering** and the latest capture message during this time. Check `http://127.0.0.1:8765/api/status` for `state`, `error`, `ageSeconds`, and `restartCount`; `connected` becomes true again after a new frame arrives. A browser refresh is not required.
+
+Run `npm test` for synthetic movement-cycle and tracking-loss checks. Run `python -m unittest discover -s tests -p 'test_*.py'` from the activated virtual environment for simulated frozen capture, recovery, API, and worker cleanup checks. The actual angle thresholds still need calibration with people exercising in front of the Kinect.
 
 ## Troubleshooting
 
 - **Kinect bridge unavailable:** Start `python backend/server.py` and keep it running. Check `http://127.0.0.1:8765/api/status` for its current error.
 - **`libfreenect_sync` not found:** Check `brew --prefix libfreenect`. The bridge expects Homebrew under `/opt/homebrew` or `/usr/local`.
 - **Capture failed:** Check Kinect power and USB, close `freenect-glview`, and reconnect the device. On macOS, grant any requested USB or accessory access.
+- **Feed freezes while the bridge stays open:** Watch `/api/status` move to `recovering` within about 5 seconds, then back to `connected` when frames resume. Check the restart count. If the device stays unplugged, the bridge keeps retrying. Confirm this behavior with the physical Kinect by interrupting its USB connection and reconnecting it; the automated tests simulate a blocked capture call but cannot verify USB or `libfreenect` behavior.
 - **Pose model failed to load:** Run `npm run prepare:assets` again, then reload the page.
 - **No body detected:** Show your full body in the RGB image, use even lighting, and avoid heavy occlusion.
 

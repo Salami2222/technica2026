@@ -6,7 +6,7 @@ import { notReady } from './analysis/types.ts'
 import type { ExerciseDetector } from './analysis/types.ts'
 import { createPoseTracker, drawSkeleton } from './pose'
 
-type BridgeStatus = { connected: boolean; sequence: number; error: string | null }
+type BridgeStatus = { connected: boolean; state: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount: number }
 type ViewState = 'loading' | 'waiting' | 'tracking' | 'no-pose' | 'error'
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
@@ -16,6 +16,9 @@ export default function App() {
   const [viewState, setViewState] = useState<ViewState>('loading')
   const [modelReady, setModelReady] = useState(false)
   const [bridgeConnected, setBridgeConnected] = useState(false)
+  const [bridgeState, setBridgeState] = useState<BridgeStatus['state'] | 'offline'>('starting')
+  const [bridgeMessage, setBridgeMessage] = useState<string | null>(null)
+  const [restartCount, setRestartCount] = useState(0)
   const [fps, setFps] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -47,22 +50,26 @@ export default function App() {
           const status = (await response.json()) as BridgeStatus
           if (!active) break
           setBridgeConnected(status.connected)
-          if (status.error) {
-            setError(status.error)
-            setViewState('error')
-            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
-          } else if (!status.connected) {
+          setBridgeState(status.state)
+          setBridgeMessage(status.connected ? null : status.error)
+          setRestartCount(status.restartCount)
+          if (!status.connected) {
             setViewState('waiting')
             setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
+            setFps(0)
+            setLandmarkCount(0)
           } else {
             setError(null)
           }
         } catch {
           if (active) {
             setBridgeConnected(false)
-            setError('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
+            setBridgeState('offline')
+            setBridgeMessage('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
             setViewState('error')
             setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
+            setFps(0)
+            setLandmarkCount(0)
           }
         }
         await delay(1500)
@@ -152,7 +159,7 @@ export default function App() {
     }
   }, [])
 
-  const statusText = {
+  const statusText = bridgeState === 'recovering' ? 'Recovering Kinect feed' : {
     loading: 'Loading pose model',
     waiting: 'Waiting for Kinect',
     tracking: 'Body tracking active',
@@ -192,7 +199,7 @@ export default function App() {
           <div className="stage-top"><span className="live-chip"><span /> LIVE VIEW</span><span className="resolution">640 × 480 RGB</span></div>
           <div className="video-area">
             <canvas ref={canvasRef} width="640" height="480" aria-label="Live Kinect camera feed with skeleton overlay" />
-            {!bridgeConnected && <div className="empty-state"><div className="reticle">＋</div><strong>Waiting for camera feed</strong><span>Connect your Kinect V1 and start the Python bridge.</span></div>}
+            {!bridgeConnected && <div className="empty-state"><div className="reticle">＋</div><strong>{bridgeState === 'recovering' ? 'Restarting camera capture' : 'Waiting for camera feed'}</strong><span>{bridgeMessage ?? 'Connect your Kinect V1 and start the Python bridge.'}</span></div>}
           </div>
           <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><span>{selectedExercise.label.toUpperCase()} MODE · LIVE SESSION</span></div>
         </div>
@@ -210,7 +217,7 @@ export default function App() {
             </div>
             {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
           </div>
-          <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${viewState}`}><span /></div><h2>{statusText}</h2><p>{viewState === 'tracking' ? 'Skeleton locked onto your movement.' : viewState === 'no-pose' ? 'Step back until your full body is visible.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.'}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div></div></div>
+          <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${bridgeState === 'recovering' ? 'recovering' : viewState}`}><span /></div><h2>{statusText}</h2><p>{bridgeMessage ?? (viewState === 'tracking' ? 'Skeleton locked onto your movement.' : viewState === 'no-pose' ? 'Step back until your full body is visible.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.')}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : bridgeState === 'starting' ? 'Starting' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div><div><span>Capture restarts</span><b>{restartCount}</b></div></div></div>
           <div className="metrics"><div className="metric"><span>TRACKING FPS</span><strong>{fps}</strong><small>processed frames / sec</small></div><div className="metric"><span>LANDMARKS</span><strong>{landmarkCount}<i>/ 33</i></strong><small>{landmarkCount ? 'body points visible' : 'awaiting subject'}</small></div></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
           <div className="hint"><span>✦</span><p>Stand far enough back for your head, hands, and feet to fit inside the frame. Bright, even lighting improves tracking.</p></div>
