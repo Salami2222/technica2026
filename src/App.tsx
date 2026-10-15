@@ -21,7 +21,7 @@ const sessionInstructions: Record<SessionStatus, string> = {
   Recording: 'Complete the full movement and return to the starting position.',
   Paused: 'Progress is saved. Resume and hold the starting position again.',
   Completed: 'Your session is complete. Start again when you are ready.',
-  'Tracking Lost': 'Counting is suspended. Return to the starting position when tracking recovers.',
+  'Tracking Lost': 'Counting is suspended. A brief interruption may resume the current rep.',
 }
 
 export default function App() {

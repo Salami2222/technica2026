@@ -3,8 +3,8 @@ export const trackingConfig = {
   minVisibility: 0.40,
   sideSwitchMargin: 0.15,
   lostResetMs: 2000,
-  smoothingTimeMs: 120,
-  minimumPhaseMs: 100,
+  smoothingTimeMs: 70,
+  minimumPhaseMs: 70,
   directionDegreesPerSecond: 9,
 } as const
 

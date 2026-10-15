@@ -1,7 +1,7 @@
-import { pushUpConfig, squatConfig } from '../analysis/config.ts'
-import type { PhaseLabel, PhaseSnapshot } from '../analysis/types.ts'
+import type { PhaseSnapshot } from '../analysis/types.ts'
 import type { ExerciseId } from '../exercises.ts'
-import { sessionConfig } from './config.ts'
+import { MovementCycle } from './cycle.ts'
+import { cycleConfig, sessionConfig } from './config.ts'
 
 export type SessionStatus = 'Idle' | 'Waiting for Position' | 'Ready' | 'Recording' | 'Paused' | 'Completed' | 'Tracking Lost'
 export type SessionSummary = { exercise: ExerciseId; repetitions: number }
@@ -12,37 +12,26 @@ export type SessionSnapshot = {
   summary: SessionSummary | null
 }
 
-type ExerciseCycle = readonly [PhaseLabel, PhaseLabel, PhaseLabel, PhaseLabel, PhaseLabel]
-
-const cycles: Record<ExerciseId, ExerciseCycle> = {
-  squat: ['Standing', 'Descending', 'Bottom', 'Ascending', 'Standing'],
-  'push-up': ['Top', 'Lowering', 'Bottom', 'Pushing', 'Top'],
-}
-
 function angle(snapshot: PhaseSnapshot, label: string): number | null {
   return snapshot.angles.find((reading) => reading.label === label)?.degrees ?? null
 }
 
 export class ExerciseSession {
   readonly exercise: ExerciseId
+  private readonly cycle: MovementCycle
   private status: SessionStatus = 'Idle'
   private repetitions = 0
   private summary: SessionSummary | null = null
   private startingSince: number | null = null
-  private returnSince: number | null = null
-  private stage = 0
+  private interrupted = false
 
   constructor(exercise: ExerciseId) {
     this.exercise = exercise
+    this.cycle = new MovementCycle(exercise)
   }
 
   snapshot(): SessionSnapshot {
-    return {
-      status: this.status,
-      exercise: this.exercise,
-      repetitions: this.repetitions,
-      summary: this.summary,
-    }
+    return { status: this.status, exercise: this.exercise, repetitions: this.repetitions, summary: this.summary }
   }
 
   start(): SessionSnapshot {
@@ -81,85 +70,67 @@ export class ExerciseSession {
 
   observe(phase: PhaseSnapshot, timestampMs: number): SessionSnapshot {
     if (!this.isActive()) return this.snapshot()
-    if (phase.tracking !== 'tracking') {
-      this.resetProgress()
-      if (this.status !== 'Waiting for Position') this.status = 'Tracking Lost'
-      return this.snapshot()
-    }
-
-    const atStart = this.isStartingPosition(phase)
-    if (this.status === 'Tracking Lost' || this.status === 'Waiting for Position') {
-      this.waitForStart(atStart, timestampMs)
-      return this.snapshot()
-    }
-
-    const cycle = cycles[this.exercise]
-    if (this.stage === 0) {
-      if (phase.phase === cycle[1]) {
-        this.stage = 1
-        this.status = 'Recording'
-      } else if (phase.phase !== cycle[0]) {
-        this.invalidateCycle()
+    const measuredAngle = phase.tracking === 'tracking' ? this.cycle.angle(phase) : null
+    if (measuredAngle === null) {
+      if (this.status === 'Waiting for Position') {
+        this.startingSince = null
+      } else {
+        this.interrupted = phase.tracking === 'partial' && (this.interrupted || this.status !== 'Tracking Lost')
+        if (phase.tracking !== 'partial') this.cycle.reset()
+        this.status = 'Tracking Lost'
       }
       return this.snapshot()
     }
 
-    if (this.stage === 3 && phase.phase === cycle[4] && atStart) {
-      this.returnSince ??= timestampMs
-      if (timestampMs - this.returnSince >= sessionConfig.returnHoldMs) {
-        this.repetitions += 1
-        this.stage = 0
-        this.returnSince = null
-        this.status = 'Ready'
-      }
+    const atStart = this.isStartingPosition(phase, measuredAngle)
+    if (this.status === 'Waiting for Position') {
+      this.waitForStart(atStart, measuredAngle, phase.side, timestampMs)
       return this.snapshot()
     }
 
-    this.returnSince = null
-    if (phase.phase === cycle[this.stage]) return this.snapshot()
-    if (phase.phase === cycle[this.stage + 1] && this.stage < 3) {
-      this.stage += 1
+    if (this.status === 'Tracking Lost') {
+      if (this.interrupted && this.cycle.resume(measuredAngle, atStart, phase.side, timestampMs)) {
+        this.status = this.cycle.inProgress ? 'Recording' : 'Ready'
+      } else {
+        this.cycle.reset()
+        if (atStart) {
+          this.cycle.arm(measuredAngle, phase.side, timestampMs)
+          this.status = 'Ready'
+        }
+      }
+      this.interrupted = false
       return this.snapshot()
     }
-    this.invalidateCycle()
+
+    const event = this.cycle.observe(measuredAngle, atStart, phase.side, timestampMs)
+    if (event === 'completed') this.repetitions += 1
+    this.status = this.cycle.inProgress ? 'Recording' : 'Ready'
     return this.snapshot()
   }
 
-  private isStartingPosition(phase: PhaseSnapshot): boolean {
-    if (phase.tracking !== 'tracking') return false
-    if (this.exercise === 'squat') {
-      const knee = angle(phase, 'Knee')
-      return phase.phase === 'Standing' && knee !== null && knee >= squatConfig.standingEnter
-    }
-    const elbow = angle(phase, 'Elbow')
+  private isStartingPosition(phase: PhaseSnapshot, measuredAngle: number): boolean {
+    if (this.exercise === 'squat') return measuredAngle >= cycleConfig.squat.startEnter
     const bodyLine = angle(phase, 'Body line')
-    return phase.phase === 'Top' && elbow !== null && elbow >= pushUpConfig.topEnter &&
-      bodyLine !== null && bodyLine >= sessionConfig.pushUpBodyLineMinDegrees
+    return measuredAngle >= cycleConfig['push-up'].startEnter && bodyLine !== null && bodyLine >= sessionConfig.pushUpBodyLineMinDegrees
   }
 
-  private waitForStart(atStart: boolean, timestampMs: number): void {
-    this.status = 'Waiting for Position'
+  private waitForStart(atStart: boolean, measuredAngle: number, side: PhaseSnapshot['side'], timestampMs: number): void {
     if (!atStart) {
       this.startingSince = null
       return
     }
     this.startingSince ??= timestampMs
     if (timestampMs - this.startingSince >= sessionConfig.startingHoldMs) {
+      this.cycle.arm(measuredAngle, side, timestampMs)
       this.status = 'Ready'
-      this.stage = 0
       this.startingSince = null
     }
   }
 
-  private invalidateCycle(): void {
-    this.resetProgress()
-    this.status = 'Waiting for Position'
-  }
-
   private resetProgress(): void {
-    this.stage = 0
+    this.cycle.reset()
     this.startingSince = null
-    this.returnSince = null
+    this.interrupted = false
   }
 
   private isActive(): boolean {

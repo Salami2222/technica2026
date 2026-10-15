@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { SquatDetector } from '../src/analysis/squat.ts'
 import { PushUpDetector } from '../src/analysis/pushUp.ts'
 import { angleDegrees, visibleSide } from '../src/analysis/geometry.ts'
+import { ExerciseSession } from '../src/session/session.ts'
 
 const point = (x, y, z = 0, visibility = 1) => ({ x, y, z, visibility, presence: visibility })
 const blank = () => Array.from({ length: 33 }, () => point(0, 0, 0, 0))
@@ -69,6 +70,34 @@ function hide(pose, indices, visibility = 0.1) {
 
 const sweep = (from, to, frames) => Array.from({ length: frames }, (_, index) =>
   from + (to - from) * (index + 1) / frames)
+
+function continuousReps(exercise, detector, pose, count, halfFrames) {
+  const session = new ExerciseSession(exercise)
+  session.start()
+  let timestamp = 0
+  const feed = (value) => {
+    session.observe(detector.update(pose(value), timestamp), timestamp)
+    timestamp += 33
+  }
+  for (let frame = 0; frame < 12; frame++) feed(170)
+  assert.equal(session.snapshot().status, 'Ready')
+  for (let rep = 1; rep <= count; rep++) {
+    for (const value of sweep(170, 70, halfFrames)) feed(value)
+    feed(70)
+    feed(70)
+    for (const value of sweep(70, 170, halfFrames)) feed(value)
+    feed(170)
+    feed(170)
+    assert.equal(session.snapshot().repetitions, rep, `${exercise} rep ${rep} at ${halfFrames} frames per half`)
+  }
+}
+
+test('live detectors count 3–10 consecutive squats and push-ups at varied speeds', () => {
+  for (const [count, halfFrames] of [[3, 6], [5, 8], [10, 12]]) {
+    continuousReps('squat', new SquatDetector(), squatPose, count, halfFrames)
+    continuousReps('push-up', new PushUpDetector(), pushUpPose, count, halfFrames)
+  }
+})
 
 function phasesFor(detector, pose, angles) {
   const phases = []
