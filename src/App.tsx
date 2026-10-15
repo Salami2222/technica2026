@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PoseLandmarker } from '@mediapipe/tasks-vision'
+import { exerciseModes } from './exercises'
+import type { ExerciseId } from './exercises'
 import { createPoseTracker, drawSkeleton } from './pose'
 
 type BridgeStatus = { connected: boolean; sequence: number; error: string | null }
@@ -15,6 +17,8 @@ export default function App() {
   const [fps, setFps] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [exerciseId, setExerciseId] = useState<ExerciseId>('squat')
+  const selectedExercise = exerciseModes.find((mode) => mode.id === exerciseId)!
 
   useEffect(() => {
     let active = true
@@ -148,7 +152,23 @@ export default function App() {
       <section className="intro">
         <div className="eyebrow"><span className="eyebrow-line" /> LIVE POSE TRACKING</div>
         <h1>See every move<br /><em>in real time.</em></h1>
-        <p>Live Kinect video with a 33-point body skeleton, powered by MediaPipe Pose Landmarker Full.</p>
+        <p>Live Kinect pose tracking for squats and push-ups, powered by MediaPipe Pose Landmarker Full.</p>
+      </section>
+      <section className="mode-picker" aria-label="Exercise mode">
+        <div className="mode-copy"><span>EXERCISE MODE</span><p>{selectedExercise.framingTip} Reps, angles, and form feedback are coming later.</p></div>
+        <div className="mode-options">
+          {exerciseModes.map((mode) => (
+            <button
+              type="button"
+              key={mode.id}
+              className={mode.id === exerciseId ? 'mode-button active' : 'mode-button'}
+              aria-pressed={mode.id === exerciseId}
+              onClick={() => setExerciseId(mode.id)}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
       </section>
       <section className="workspace" aria-label="Live camera workspace">
         <div className="stage">
@@ -157,7 +177,7 @@ export default function App() {
             <canvas ref={canvasRef} width="640" height="480" aria-label="Live Kinect camera feed with skeleton overlay" />
             {!bridgeConnected && <div className="empty-state"><div className="reticle">＋</div><strong>Waiting for camera feed</strong><span>Connect your Kinect V1 and start the Python bridge.</span></div>}
           </div>
-          <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><span>01 / LIVE SESSION</span></div>
+          <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><span>{selectedExercise.label.toUpperCase()} MODE · LIVE SESSION</span></div>
         </div>
         <aside className="sidebar">
           <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${viewState}`}><span /></div><h2>{statusText}</h2><p>{viewState === 'tracking' ? 'Skeleton locked onto your movement.' : viewState === 'no-pose' ? 'Step back until your full body is visible.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.'}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div></div></div>

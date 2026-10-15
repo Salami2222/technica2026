@@ -1,6 +1,8 @@
 # Kinetiq V2
 
-Kinetiq V2 is the live pose viewer in the `technica2026` repository. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
+Kinetiq V2 is the live pose viewer in the `technica2026` repository. Its exercise scope is **squats and push-ups**. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
+
+Choose **Squat** or **Push-up** in the app. Both modes currently share the same live tracking view. Their definitions live in `src/exercises.ts`, which provides a place for independent repetition counting, joint-angle analysis, and form feedback later. Selecting a mode does not perform any of those analyses yet.
 
 ## Requirements
 
@@ -50,4 +52,4 @@ Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` an
 - **Pose model failed to load:** Run `npm run prepare:assets` again, then reload the page.
 - **No body detected:** Show your full body in the RGB image, use even lighting, and avoid heavy occlusion.
 
-Only RGB is read for this milestone. Depth, exercise classification, repetition counts, joint angles, and form feedback are future work.
+Only RGB is read for this milestone. Depth, repetition counts, joint angles, and form feedback are future work.
