@@ -30,11 +30,7 @@ export function visibleSide(
 
   const candidates = (['left', 'right'] as const).map((side) => {
     const confidence = Math.min(...required.map((name) => {
-      const index = jointIndex(side, name)
-      const point = image[index]
-      const worldPoint = world[index]
-      if (!point || !worldPoint || !finitePoint(point) || !finitePoint(worldPoint)) return 0
-      return Math.min(point.visibility ?? 0, point.presence ?? 1)
+      return jointConfidence(image, world, side, name)
     }))
     return { side, confidence }
   })
@@ -44,6 +40,18 @@ export function visibleSide(
     best.confidence - preferred.confidence <= trackingConfig.sideSwitchMargin ? preferred : best
   if (selected.confidence < trackingConfig.minVisibility) return null
   return { image, world, side: selected.side }
+}
+
+export function hasVisibleJoint(points: PosePoints, joint: JointName): boolean {
+  return jointConfidence(points.image, points.world, points.side, joint) >= trackingConfig.minVisibility
+}
+
+function jointConfidence(image: readonly Landmark[], world: readonly Landmark[], side: PosePoints['side'], name: JointName): number {
+  const index = jointIndex(side, name)
+  const point = image[index]
+  const worldPoint = world[index]
+  if (!point || !worldPoint || !finitePoint(point) || !finitePoint(worldPoint)) return 0
+  return Math.min(point.visibility ?? 0, point.presence ?? 1)
 }
 
 function finitePoint(point: Landmark): boolean {

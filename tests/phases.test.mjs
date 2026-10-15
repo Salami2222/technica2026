@@ -54,6 +54,19 @@ function pushUpPose(elbowDegrees, visible = true) {
   return { landmarks: [image], worldLandmarks: [world] }
 }
 
+function withRightSide(pose, visibility = 0.9) {
+  for (const [left, right] of [[11, 12], [13, 14], [15, 16], [23, 24], [25, 26], [27, 28]]) {
+    pose.landmarks[0][right] = { ...pose.landmarks[0][left], visibility, presence: visibility }
+    pose.worldLandmarks[0][right] = { ...pose.worldLandmarks[0][left] }
+  }
+  return pose
+}
+
+function hide(pose, indices, visibility = 0.1) {
+  for (const index of indices) pose.landmarks[0][index].visibility = visibility
+  return pose
+}
+
 const sweep = (from, to, frames) => Array.from({ length: frames }, (_, index) =>
   from + (to - from) * (index + 1) / frames)
 
@@ -110,13 +123,111 @@ test('push-up advances through all four phases', () => {
   ])
 })
 
-test('lost landmarks and reset clear stale phase readings', () => {
+test('briefly missing squat joints hold the phase without stale angles', () => {
   const detector = new SquatDetector()
   assert.equal(detector.update(squatPose(170), 0).phase, 'Standing')
-  assert.equal(detector.update(squatPose(170, false), 33).phase, 'Tracking Lost')
-  assert.equal(detector.missing(600).phase, 'Tracking Lost')
+  const partial = detector.update(squatPose(70, false), 33)
+  assert.equal(partial.phase, 'Standing')
+  assert.equal(partial.tracking, 'partial')
+  assert.deepEqual(partial.angles, [])
+  assert.equal(detector.missing(1500).phase, 'Standing')
+  const resumed = detector.update(squatPose(70), 1600)
+  assert.equal(resumed.phase, 'Standing')
+  assert.equal(resumed.tracking, 'tracking')
+  assert.equal(Math.round(resumed.angles[0].degrees), 70)
+  assert.equal(detector.update(squatPose(70), 1633).phase, 'Standing')
+})
+
+test('tracking loss after two seconds clears the detector', () => {
+  const detector = new SquatDetector()
+  assert.equal(detector.update(squatPose(170), 0).phase, 'Standing')
+  assert.equal(detector.missing(2000).tracking, 'partial')
+  const lost = detector.missing(2001)
+  assert.equal(lost.phase, 'Tracking Lost')
+  assert.equal(lost.tracking, 'lost')
+  assert.deepEqual(lost.angles, [])
+  assert.equal(detector.update(squatPose(70), 2033).phase, 'Bottom')
   detector.reset()
-  assert.equal(detector.missing(633).phase, 'Not Ready')
+  assert.equal(detector.missing(2066).phase, 'Not Ready')
+})
+
+test('squat knee tracking ignores missing shoulder and accepts 0.40 visibility', () => {
+  const detector = new SquatDetector()
+  const pose = hide(squatPose(170), [11], 0)
+  for (const index of [23, 25, 27]) pose.landmarks[0][index].visibility = 0.4
+  const snapshot = detector.update(pose, 0)
+  assert.equal(snapshot.phase, 'Standing')
+  assert.equal(snapshot.tracking, 'tracking')
+  assert.deepEqual(snapshot.angles.map((angle) => angle.label), ['Knee'])
+  assert.equal(detector.update(hide(squatPose(170), [25], 0.39), 33).tracking, 'partial')
+})
+
+test('push-up elbow tracking continues when optional hip and ankle disappear', () => {
+  const detector = new PushUpDetector()
+  assert.equal(detector.update(pushUpPose(170), 0).phase, 'Top')
+  const snapshot = detector.update(hide(pushUpPose(170), [23, 27]), 33)
+  assert.equal(snapshot.phase, 'Top')
+  assert.equal(snapshot.tracking, 'tracking')
+  assert.deepEqual(snapshot.angles.map((angle) => angle.label), ['Elbow'])
+  const partial = detector.update(hide(pushUpPose(100), [13]), 66)
+  assert.equal(partial.phase, 'Top')
+  assert.equal(partial.tracking, 'partial')
+  assert.deepEqual(partial.angles, [])
+})
+
+test('side switches on unreliable essential joints without a phase jump', () => {
+  const squat = new SquatDetector()
+  assert.equal(squat.update(withRightSide(squatPose(170)), 0).side, 'left')
+  const switched = withRightSide(squatPose(70))
+  hide(switched, [25])
+  const snapshot = squat.update(switched, 33)
+  assert.equal(snapshot.side, 'right')
+  assert.equal(snapshot.phase, 'Standing')
+  assert.equal(Math.round(snapshot.angles[0].degrees), 70)
+  assert.equal(squat.update(switched, 66).phase, 'Standing')
+
+  const pushUp = new PushUpDetector()
+  assert.equal(pushUp.update(withRightSide(pushUpPose(170)), 0).side, 'left')
+  const rightOnly = withRightSide(pushUpPose(70))
+  hide(rightOnly, [13])
+  const pushSnapshot = pushUp.update(rightOnly, 33)
+  assert.equal(pushSnapshot.side, 'right')
+  assert.equal(pushSnapshot.phase, 'Top')
+  assert.equal(Math.round(pushSnapshot.angles[0].degrees), 70)
+  assert.equal(pushUp.update(rightOnly, 66).phase, 'Top')
+})
+
+test('push-up recovery within the grace period preserves its last phase', () => {
+  const detector = new PushUpDetector()
+  assert.equal(detector.update(pushUpPose(170), 0).phase, 'Top')
+  assert.equal(detector.update(pushUpPose(70, false), 100).tracking, 'partial')
+  assert.equal(detector.missing(1900).phase, 'Top')
+  const recovered = detector.update(pushUpPose(70), 1950)
+  assert.equal(recovered.phase, 'Top')
+  assert.equal(recovered.tracking, 'tracking')
+  assert.equal(Math.round(recovered.angles[0].degrees), 70)
+  assert.equal(detector.update(pushUpPose(70), 1983).phase, 'Top')
+})
+
+test('bottom phase stays stable through a short occlusion', () => {
+  const detector = new SquatDetector()
+  let timestamp = 0
+  for (const angle of [...Array(8).fill(170), ...sweep(170, 70, 34), ...Array(8).fill(70)]) {
+    detector.update(squatPose(angle), timestamp)
+    timestamp += 33
+  }
+  assert.equal(detector.missing(timestamp + 500).phase, 'Bottom')
+  const resumed = detector.update(squatPose(170), timestamp + 700)
+  assert.equal(resumed.phase, 'Bottom')
+  assert.equal(resumed.tracking, 'tracking')
+})
+
+test('a gap over two seconds resets even if no missing update was sampled', () => {
+  const detector = new PushUpDetector()
+  assert.equal(detector.update(pushUpPose(170), 0).phase, 'Top')
+  const fresh = detector.update(pushUpPose(70), 2100)
+  assert.equal(fresh.phase, 'Bottom')
+  assert.equal(fresh.tracking, 'tracking')
 })
 
 test('bottom-phase jitter does not switch the squat phase', () => {

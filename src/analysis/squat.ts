@@ -1,7 +1,7 @@
 import type { PoseLandmarkerResult } from '@mediapipe/tasks-vision'
 import { squatConfig, trackingConfig } from './config.ts'
 import { SmoothedSignal, TrackingGate } from './filter.ts'
-import { jointAngle, visibleSide } from './geometry.ts'
+import { hasVisibleJoint, jointAngle, visibleSide } from './geometry.ts'
 import type { ExerciseDetector, PhaseSnapshot } from './types.ts'
 import { notReady } from './types.ts'
 
@@ -17,18 +17,22 @@ export class SquatDetector implements ExerciseDetector {
   private side: 'left' | 'right' | null = null
 
   update(result: PoseLandmarkerResult, timestampMs: number): PhaseSnapshot {
-    const points = visibleSide(result, ['shoulder', 'hip', 'knee', 'ankle'], this.side)
+    const points = visibleSide(result, ['hip', 'knee', 'ankle'], this.side)
     if (!points) return this.missing(timestampMs)
 
     const kneeAngle = jointAngle(points, 'hip', 'knee', 'ankle')
-    const hipAngle = jointAngle(points, 'shoulder', 'hip', 'knee')
-    if (kneeAngle === null || hipAngle === null) return this.missing(timestampMs)
+    if (kneeAngle === null) return this.missing(timestampMs)
+    const hipAngle = hasVisibleJoint(points, 'shoulder') ? jointAngle(points, 'shoulder', 'hip', 'knee') : null
 
-    this.tracking.valid(timestampMs)
+    if (this.tracking.expired(timestampMs)) this.resetMeasurements()
+    const sideChanged = this.side !== null && this.side !== points.side
+    const resumed = this.tracking.valid(timestampMs)
+    if (resumed || sideChanged) this.resetSignals()
     this.side = points.side
     const knee = this.knee.update(kneeAngle, timestampMs)
-    const hip = this.hip.update(hipAngle, timestampMs)
-    const bend = this.bend.update(knee * 0.7 + hip * 0.3, timestampMs)
+    const hip = hipAngle === null ? null : this.hip.update(hipAngle, timestampMs)
+    if (hipAngle === null) this.hip.reset()
+    const bend = this.bend.update(knee, timestampMs)
     const descending = this.bend.velocity < -trackingConfig.directionDegreesPerSecond
     const ascending = this.bend.velocity > trackingConfig.directionDegreesPerSecond
     const canTransition = timestampMs - this.transitionedAt >= trackingConfig.minimumPhaseMs
@@ -38,7 +42,7 @@ export class SquatDetector implements ExerciseDetector {
       else if (bend <= squatConfig.bottomEnter) this.enter('Bottom', timestampMs)
       else if (descending) this.enter('Descending', timestampMs)
       else if (ascending) this.enter('Ascending', timestampMs)
-    } else if (canTransition) {
+    } else if (canTransition && !resumed && !sideChanged) {
       switch (this.phase) {
         case 'Standing':
           if (bend <= squatConfig.standingExit && descending) this.enter('Descending', timestampMs)
@@ -57,28 +61,26 @@ export class SquatDetector implements ExerciseDetector {
       }
     }
 
+    const angles = [{ label: 'Knee', degrees: knee }]
+    if (hip !== null) angles.push({ label: 'Hip', degrees: hip })
     if (!this.phase) return {
       ...notReady(),
-      angles: [
-        { label: 'Knee', degrees: knee },
-        { label: 'Hip', degrees: hip },
-      ],
+      tracking: 'tracking',
+      angles,
       side: points.side,
       detail: 'Begin upright or move through a squat to establish a phase.',
     }
     return {
       phase: this.phase,
-      angles: [
-        { label: 'Knee', degrees: knee },
-        { label: 'Hip', degrees: hip },
-      ],
+      tracking: 'tracking',
+      angles,
       side: points.side,
-      detail: 'Phase follows smoothed knee and hip bend direction.',
+      detail: 'Phase follows smoothed knee bend direction.',
     }
   }
 
   missing(timestampMs: number): PhaseSnapshot {
-    return this.tracking.missing(timestampMs, () => this.resetMeasurements())
+    return this.tracking.missing(timestampMs, this.phase ?? 'Not Ready', this.side, () => this.resetMeasurements())
   }
 
   reset(): void {
@@ -94,9 +96,13 @@ export class SquatDetector implements ExerciseDetector {
   private resetMeasurements(): void {
     this.phase = null
     this.transitionedAt = -Infinity
+    this.resetSignals()
+    this.side = null
+  }
+
+  private resetSignals(): void {
     this.knee.reset()
     this.hip.reset()
     this.bend.reset()
-    this.side = null
   }
 }

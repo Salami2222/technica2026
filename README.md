@@ -7,7 +7,9 @@ Choose **Squat** or **Push-up** in the app. Both modes share the same live track
 - **Squat:** Standing → Descending → Bottom → Ascending, using hip and knee angles from the more visible leg.
 - **Push-up:** Top → Lowering → Bottom → Pushing, using elbow bend, shoulder travel, and body position from the more visible side. A side-on camera view is recommended.
 
-The app displays smoothed joint angles and shows **Not Ready** or **Tracking Lost** when it cannot determine a phase reliably. Initial visibility, angle, movement, smoothing, and hysteresis values are in `src/analysis/config.ts` for later calibration. These phases are movement labels only; they do not count repetitions or judge form.
+The app displays smoothed joint angles and separate tracking status. Squats need a visible hip, knee, and ankle for the primary knee angle; the shoulder and hip angle are optional. Push-ups need a visible shoulder, elbow, and wrist for the primary elbow angle; the hip and ankle are optional after a side-on view has been established. Facial landmarks are never used for phase detection. The initial visibility threshold is **0.40**.
+
+If essential joints disappear briefly, **Partial Tracking** preserves the last phase for up to **2 seconds** and hides angle readings rather than reusing old measurements. The first reliable observation after an occlusion or side switch reinitializes smoothing and cannot advance the phase by itself. After more than 2 seconds without reliable measurements, the detector resets and shows **Tracking Lost**. **Kinect Disconnected** means the camera feed itself stopped, separate from landmark occlusion. Initial visibility, angle, movement, smoothing, and side-switch hysteresis values are in `src/analysis/config.ts` for later calibration. These phases are movement labels only; they do not count repetitions or judge form.
 
 ## Requirements
 
@@ -51,7 +53,7 @@ Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` an
 
 Kinect capture runs in a separate child process. If no frame arrives for more than **5 seconds** (including during startup), the bridge terminates that process and starts a fresh one after **2 seconds**. It repeats until frames return, without restarting the HTTP server. The app shows **Recovering** and the latest capture message during this time. Check `http://127.0.0.1:8765/api/status` for `state`, `error`, `ageSeconds`, and `restartCount`; `connected` becomes true again after a new frame arrives. A browser refresh is not required.
 
-Run `npm test` for synthetic movement-cycle and tracking-loss checks. Run `python -m unittest discover -s tests -p 'test_*.py'` from the activated virtual environment for simulated frozen capture, recovery, API, and worker cleanup checks. The actual angle thresholds still need calibration with people exercising in front of the Kinect.
+Run `npm test` for synthetic movement-cycle, temporary occlusion, tracking-loss, and left/right switching checks. Run `python -m unittest discover -s tests -p 'test_*.py'` from the activated virtual environment for simulated frozen capture, recovery, API, and worker cleanup checks. Physical Kinect testing is still needed to tune visibility and movement thresholds under real lighting, camera angles, occlusion, and USB interruptions.
 
 ## Troubleshooting
 

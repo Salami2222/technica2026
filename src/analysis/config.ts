@@ -1,8 +1,8 @@
 // Starting values for a side-on view. Tune these with real exercise recordings.
 export const trackingConfig = {
-  minVisibility: 0.55,
+  minVisibility: 0.40,
   sideSwitchMargin: 0.15,
-  lostResetMs: 500,
+  lostResetMs: 2000,
   smoothingTimeMs: 120,
   minimumPhaseMs: 100,
   directionDegreesPerSecond: 9,

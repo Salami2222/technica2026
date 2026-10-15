@@ -176,6 +176,9 @@ h1 em { color: #ff4056; font-style: normal; }
   letter-spacing: .18em;
 }
 .phase-panel { border-color: #a13a4a; background: linear-gradient(145deg, #301b22, #171619 70%); }
+.tracking-badge { display: inline-block; margin-top: 14px; padding: 5px 8px; border: 1px solid #92515c; color: #ff9eab; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.tracking-badge.partial { border-color: #97744c; color: #e3aa6d; }
+.tracking-badge.lost, .tracking-badge.not-ready { border-color: #66545a; color: #c9aeb5; }
 .phase-panel h2 {
   color: #ff5b70;
   font: 700 clamp(29px, 2.5vw, 38px)/1.1 'Space Grotesk';
@@ -208,6 +211,8 @@ h1 em { color: #ff4056; font-style: normal; }
 }
 .status-icon.tracking { border-color: #ff4056; }
 .status-icon.tracking span { background: #ff4056; box-shadow: 0 0 18px #ff4056; }
+.status-icon.partial, .status-icon.lost { border-color: #e3aa6d; }
+.status-icon.partial span, .status-icon.lost span { background: #e3aa6d; box-shadow: 0 0 18px #e3aa6d; }
 .status-icon.recovering { border-color: #e3aa6d; }
 .status-icon.recovering span { background: #e3aa6d; box-shadow: 0 0 18px #e3aa6d; animation: recovery-pulse 1.2s ease-in-out infinite; }
 @keyframes recovery-pulse { 50% { opacity: .35; transform: scale(.7); } }

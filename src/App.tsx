@@ -7,7 +7,7 @@ import type { ExerciseDetector } from './analysis/types.ts'
 import { createPoseTracker, drawSkeleton } from './pose'
 
 type BridgeStatus = { connected: boolean; state: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount: number }
-type ViewState = 'loading' | 'waiting' | 'tracking' | 'no-pose' | 'error'
+type ViewState = 'loading' | 'waiting' | 'tracking' | 'partial' | 'lost' | 'no-pose' | 'error'
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 
@@ -39,6 +39,8 @@ export default function App() {
     let active = true
     let tracker: PoseLandmarker | null = null
     let lastSequence = -1
+    let lastDetectorCheck = performance.now()
+    let lastFrameAt = performance.now()
     let frames = 0
     let fpsStarted = performance.now()
 
@@ -55,7 +57,8 @@ export default function App() {
           setRestartCount(status.restartCount)
           if (!status.connected) {
             setViewState('waiting')
-            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
+            detectorRef.current!.reset()
+            setPhaseSnapshot(notReady())
             setFps(0)
             setLandmarkCount(0)
           } else {
@@ -67,7 +70,8 @@ export default function App() {
             setBridgeState('offline')
             setBridgeMessage('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
             setViewState('error')
-            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
+            detectorRef.current!.reset()
+            setPhaseSnapshot(notReady())
             setFps(0)
             setLandmarkCount(0)
           }
@@ -97,11 +101,27 @@ export default function App() {
         try {
           const response = await fetch('/api/frame', { cache: 'no-store' })
           if (!response.ok) {
+            const now = performance.now()
+            if (now - lastFrameAt > 1000) setFps(0)
+            if (now - lastDetectorCheck >= 200) {
+              const snapshot = detectorRef.current!.missing(now)
+              setPhaseSnapshot(snapshot)
+              setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+              lastDetectorCheck = now
+            }
             await delay(250)
             continue
           }
           const sequence = Number(response.headers.get('X-Frame-Sequence'))
           if (sequence === lastSequence) {
+            const now = performance.now()
+            if (now - lastFrameAt > 1000) setFps(0)
+            if (now - lastDetectorCheck >= 200) {
+              const snapshot = detectorRef.current!.missing(now)
+              setPhaseSnapshot(snapshot)
+              setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+              lastDetectorCheck = now
+            }
             await delay(15)
             continue
           }
@@ -123,14 +143,16 @@ export default function App() {
 
           // MediaPipe requires a monotonic timestamp for VIDEO mode.
           const timestamp = performance.now()
+          lastFrameAt = timestamp
           const result = tracker.detectForVideo(canvas, timestamp)
-          setPhaseSnapshot(detectorRef.current!.update(result, timestamp))
+          const snapshot = detectorRef.current!.update(result, timestamp)
+          setPhaseSnapshot(snapshot)
+          setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+          lastDetectorCheck = timestamp
           if (result.landmarks.length > 0) {
-            setViewState('tracking')
             setLandmarkCount(result.landmarks[0].length)
             drawSkeleton(context, result.landmarks)
           } else {
-            setViewState('no-pose')
             setLandmarkCount(0)
           }
           lastSequence = sequence
@@ -159,11 +181,14 @@ export default function App() {
     }
   }, [])
 
-  const statusText = bridgeState === 'recovering' ? 'Recovering Kinect feed' : {
+  const cameraDisconnected = !bridgeConnected && bridgeState !== 'starting'
+  const statusText = cameraDisconnected ? 'Kinect Disconnected' : {
     loading: 'Loading pose model',
     waiting: 'Waiting for Kinect',
-    tracking: 'Body tracking active',
-    'no-pose': 'No body detected',
+    tracking: 'Tracking',
+    partial: 'Partial Tracking',
+    lost: 'Tracking Lost',
+    'no-pose': 'Not Ready',
     error: 'Attention needed',
   }[viewState]
 
@@ -206,6 +231,7 @@ export default function App() {
         <aside className="sidebar">
           <div className={`panel phase-panel ${phaseSnapshot.phase === 'Tracking Lost' || phaseSnapshot.phase === 'Not Ready' ? 'phase-unavailable' : ''}`}>
             <div className="panel-label">{selectedExercise.label.toUpperCase()} · MOVEMENT PHASE</div>
+            <div className={`tracking-badge ${phaseSnapshot.tracking}`}>{cameraDisconnected ? 'Kinect Disconnected' : phaseSnapshot.tracking === 'partial' ? 'Partial Tracking' : phaseSnapshot.tracking === 'lost' ? 'Tracking Lost' : phaseSnapshot.tracking === 'tracking' ? 'Tracking' : 'Not Ready'}</div>
             <h2 aria-live="polite">{phaseSnapshot.phase}</h2>
             <p>{phaseSnapshot.detail}</p>
             <div className="angle-grid">
@@ -217,7 +243,7 @@ export default function App() {
             </div>
             {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
           </div>
-          <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${bridgeState === 'recovering' ? 'recovering' : viewState}`}><span /></div><h2>{statusText}</h2><p>{bridgeMessage ?? (viewState === 'tracking' ? 'Skeleton locked onto your movement.' : viewState === 'no-pose' ? 'Step back until your full body is visible.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.')}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : bridgeState === 'starting' ? 'Starting' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div><div><span>Capture restarts</span><b>{restartCount}</b></div></div></div>
+          <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${bridgeState === 'recovering' ? 'recovering' : viewState}`}><span /></div><h2>{statusText}</h2><p>{bridgeMessage ?? (viewState === 'tracking' ? 'Required joints are visible and angles are updating.' : viewState === 'partial' ? 'Holding the last phase until reliable joints return.' : viewState === 'lost' ? 'Required joints have been unavailable for over 2 seconds.' : viewState === 'no-pose' ? 'Show the required joints to begin tracking.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.')}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : bridgeState === 'starting' ? 'Starting' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div><div><span>Capture restarts</span><b>{restartCount}</b></div></div></div>
           <div className="metrics"><div className="metric"><span>TRACKING FPS</span><strong>{fps}</strong><small>processed frames / sec</small></div><div className="metric"><span>LANDMARKS</span><strong>{landmarkCount}<i>/ 33</i></strong><small>{landmarkCount ? 'body points visible' : 'awaiting subject'}</small></div></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
           <div className="hint"><span>✦</span><p>Stand far enough back for your head, hands, and feet to fit inside the frame. Bright, even lighting improves tracking.</p></div>

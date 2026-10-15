@@ -1,7 +1,7 @@
 import type { PoseLandmarkerResult } from '@mediapipe/tasks-vision'
 import { pushUpConfig, trackingConfig } from './config.ts'
 import { SmoothedSignal, TrackingGate } from './filter.ts'
-import { jointAngle, jointIndex, visibleSide } from './geometry.ts'
+import { hasVisibleJoint, jointAngle, jointIndex, visibleSide } from './geometry.ts'
 import type { ExerciseDetector, PhaseSnapshot } from './types.ts'
 import { notReady } from './types.ts'
 
@@ -18,39 +18,57 @@ export class PushUpDetector implements ExerciseDetector {
   private side: 'left' | 'right' | null = null
 
   update(result: PoseLandmarkerResult, timestampMs: number): PhaseSnapshot {
-    const points = visibleSide(result, ['shoulder', 'elbow', 'wrist', 'hip', 'ankle'], this.side)
+    const points = visibleSide(result, ['shoulder', 'elbow', 'wrist'], this.side)
     if (!points) return this.missing(timestampMs)
 
     const elbowAngle = jointAngle(points, 'shoulder', 'elbow', 'wrist')
-    const shoulderAngle = jointAngle(points, 'elbow', 'shoulder', 'hip')
-    const bodyAngle = jointAngle(points, 'shoulder', 'hip', 'ankle')
-    if (elbowAngle === null || shoulderAngle === null || bodyAngle === null) return this.missing(timestampMs)
+    if (elbowAngle === null) return this.missing(timestampMs)
+    const hipVisible = hasVisibleJoint(points, 'hip')
+    const ankleVisible = hasVisibleJoint(points, 'ankle')
+    const shoulderAngle = hipVisible ? jointAngle(points, 'elbow', 'shoulder', 'hip') : null
+    const bodyAngle = hipVisible && ankleVisible ? jointAngle(points, 'shoulder', 'hip', 'ankle') : null
 
     const shoulderPoint = points.image[jointIndex(points.side, 'shoulder')]
+    const elbowPoint = points.image[jointIndex(points.side, 'elbow')]
     const wristPoint = points.image[jointIndex(points.side, 'wrist')]
-    const hipPoint = points.image[jointIndex(points.side, 'hip')]
-    const anklePoint = points.image[jointIndex(points.side, 'ankle')]
+    const axisPoint = ankleVisible ? points.image[jointIndex(points.side, 'ankle')]
+      : hipVisible ? points.image[jointIndex(points.side, 'hip')] : null
+    if (this.tracking.expired(timestampMs)) this.resetMeasurements()
     // A side-on push-up is roughly horizontal in the camera image.
     // This is only a mode-readiness check, not a form-quality judgment.
-    const bodyAxisDegrees = Math.atan2(
-      Math.abs((anklePoint.y - shoulderPoint.y) * 480),
-      Math.abs((anklePoint.x - shoulderPoint.x) * 640),
-    ) * 180 / Math.PI
-    if (bodyAxisDegrees > pushUpConfig.maxBodyAxisDegreesFromHorizontal) {
-      this.resetMeasurements()
+    const bodyAxisDegrees = axisPoint ? Math.atan2(
+      Math.abs((axisPoint.y - shoulderPoint.y) * 480),
+      Math.abs((axisPoint.x - shoulderPoint.x) * 640),
+    ) * 180 / Math.PI : null
+    if (bodyAxisDegrees !== null && bodyAxisDegrees > pushUpConfig.maxBodyAxisDegreesFromHorizontal) {
+      this.reset()
       return {
         ...notReady(),
         detail: 'Use a side view so your body runs across the camera frame.',
       }
     }
-    const torsoLength = Math.max(Math.hypot(shoulderPoint.x - hipPoint.x, shoulderPoint.y - hipPoint.y), 0.05)
-    const relativeHeight = (wristPoint.y - shoulderPoint.y) / torsoLength
-
-    this.tracking.valid(timestampMs)
+    if (bodyAxisDegrees === null && this.phase === null) return {
+      ...notReady(),
+      angles: [{ label: 'Elbow', degrees: elbowAngle }],
+      side: points.side,
+      detail: 'Show your hip or ankle briefly to establish a side-on push-up view.',
+    }
+    const sideChanged = this.side !== null && this.side !== points.side
+    const resumed = this.tracking.valid(timestampMs)
+    if (resumed || sideChanged) this.resetSignals()
     this.side = points.side
+    const armLength = Math.max(
+      Math.hypot(shoulderPoint.x - elbowPoint.x, shoulderPoint.y - elbowPoint.y) +
+      Math.hypot(elbowPoint.x - wristPoint.x, elbowPoint.y - wristPoint.y),
+      0.05,
+    )
+    const relativeHeight = (wristPoint.y - shoulderPoint.y) / armLength
+
     const elbow = this.elbow.update(elbowAngle, timestampMs)
-    const shoulder = this.shoulder.update(shoulderAngle, timestampMs)
-    const bodyLine = this.bodyLine.update(bodyAngle, timestampMs)
+    const shoulder = shoulderAngle === null ? null : this.shoulder.update(shoulderAngle, timestampMs)
+    const bodyLine = bodyAngle === null ? null : this.bodyLine.update(bodyAngle, timestampMs)
+    if (shoulderAngle === null) this.shoulder.reset()
+    if (bodyAngle === null) this.bodyLine.reset()
     this.shoulderHeight.update(relativeHeight, timestampMs)
 
     // Elbow flexion is primary; shoulder travel helps reject a noisy angle reversal.
@@ -67,7 +85,7 @@ export class PushUpDetector implements ExerciseDetector {
       else if (elbow <= pushUpConfig.bottomEnter) this.enter('Bottom', timestampMs)
       else if (lowering) this.enter('Lowering', timestampMs)
       else if (pushing) this.enter('Pushing', timestampMs)
-    } else if (canTransition) {
+    } else if (canTransition && !resumed && !sideChanged) {
       switch (this.phase) {
         case 'Top':
           if (elbow <= pushUpConfig.topExit && lowering) this.enter('Lowering', timestampMs)
@@ -86,30 +104,27 @@ export class PushUpDetector implements ExerciseDetector {
       }
     }
 
+    const angles = [{ label: 'Elbow', degrees: elbow }]
+    if (shoulder !== null) angles.push({ label: 'Shoulder', degrees: shoulder })
+    if (bodyLine !== null) angles.push({ label: 'Body line', degrees: bodyLine })
     if (!this.phase) return {
       ...notReady(),
-      angles: [
-        { label: 'Elbow', degrees: elbow },
-        { label: 'Shoulder', degrees: shoulder },
-        { label: 'Body line', degrees: bodyLine },
-      ],
+      tracking: 'tracking',
+      angles,
       side: points.side,
       detail: 'Start with extended arms or move through a push-up to establish a phase.',
     }
     return {
       phase: this.phase,
-      angles: [
-        { label: 'Elbow', degrees: elbow },
-        { label: 'Shoulder', degrees: shoulder },
-        { label: 'Body line', degrees: bodyLine },
-      ],
+      tracking: 'tracking',
+      angles,
       side: points.side,
       detail: 'Phase follows elbow bend and shoulder travel.',
     }
   }
 
   missing(timestampMs: number): PhaseSnapshot {
-    return this.tracking.missing(timestampMs, () => this.resetMeasurements())
+    return this.tracking.missing(timestampMs, this.phase ?? 'Not Ready', this.side, () => this.resetMeasurements())
   }
 
   reset(): void {
@@ -125,10 +140,14 @@ export class PushUpDetector implements ExerciseDetector {
   private resetMeasurements(): void {
     this.phase = null
     this.transitionedAt = -Infinity
+    this.resetSignals()
+    this.side = null
+  }
+
+  private resetSignals(): void {
     this.elbow.reset()
     this.shoulder.reset()
     this.bodyLine.reset()
     this.shoulderHeight.reset()
-    this.side = null
   }
 }

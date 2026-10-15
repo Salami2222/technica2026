@@ -8,6 +8,7 @@ export type PhaseLabel =
 export type AngleReading = { label: string; degrees: number }
 export type PhaseSnapshot = {
   phase: PhaseLabel
+  tracking: 'tracking' | 'partial' | 'lost' | 'not-ready'
   angles: AngleReading[]
   side: 'left' | 'right' | null
   detail: string
@@ -21,6 +22,7 @@ export interface ExerciseDetector {
 
 export const notReady = (): PhaseSnapshot => ({
   phase: 'Not Ready',
+  tracking: 'not-ready',
   angles: [],
   side: null,
   detail: 'Show the required joints clearly to begin tracking.',
