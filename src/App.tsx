@@ -3,13 +3,26 @@ import type { PoseLandmarker } from '@mediapipe/tasks-vision'
 import { createExerciseDetector, exerciseModes } from './exercises'
 import type { ExerciseId } from './exercises'
 import { notReady } from './analysis/types.ts'
-import type { ExerciseDetector } from './analysis/types.ts'
+import type { ExerciseDetector, PhaseSnapshot } from './analysis/types.ts'
 import { createPoseTracker, drawSkeleton } from './pose'
+import { ExerciseSession } from './session/session.ts'
+import type { SessionStatus } from './session/session.ts'
 
-type BridgeStatus = { connected: boolean; state: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount: number }
+type BridgeStatus = { connected: boolean; state?: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount?: number }
 type ViewState = 'loading' | 'waiting' | 'tracking' | 'partial' | 'lost' | 'no-pose' | 'error'
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+const sessionOpen = (status: SessionStatus) => status !== 'Idle' && status !== 'Completed'
+
+const sessionInstructions: Record<SessionStatus, string> = {
+  Idle: 'Choose an exercise, then start a new session.',
+  'Waiting for Position': 'Hold the starting position steadily. Counting begins automatically.',
+  Ready: 'Starting position confirmed. Begin your next repetition.',
+  Recording: 'Complete the full movement and return to the starting position.',
+  Paused: 'Progress is saved. Resume and hold the starting position again.',
+  Completed: 'Your session is complete. Start again when you are ready.',
+  'Tracking Lost': 'Counting is suspended. Return to the starting position when tracking recovers.',
+}
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -25,15 +38,34 @@ export default function App() {
   const [exerciseId, setExerciseId] = useState<ExerciseId>('squat')
   const detectorRef = useRef<ExerciseDetector | null>(null)
   detectorRef.current ??= createExerciseDetector('squat')
+  const sessionRef = useRef<ExerciseSession | null>(null)
+  sessionRef.current ??= new ExerciseSession('squat')
   const [phaseSnapshot, setPhaseSnapshot] = useState(notReady)
+  const [sessionSnapshot, setSessionSnapshot] = useState(() => sessionRef.current!.snapshot())
   const selectedExercise = exerciseModes.find((mode) => mode.id === exerciseId)!
+  const isSessionOpen = sessionOpen(sessionSnapshot.status)
 
   const selectExercise = (id: ExerciseId) => {
-    if (id === exerciseId) return
+    if (id === exerciseId || isSessionOpen) return
     detectorRef.current = createExerciseDetector(id)
     setPhaseSnapshot(notReady())
     setExerciseId(id)
   }
+
+  const startSession = () => {
+    if (isSessionOpen) return
+    detectorRef.current = createExerciseDetector(exerciseId)
+    setPhaseSnapshot(notReady())
+    sessionRef.current = new ExerciseSession(exerciseId)
+    setSessionSnapshot(sessionRef.current.start())
+  }
+
+  const pauseOrResume = () => {
+    const session = sessionRef.current!
+    setSessionSnapshot(sessionSnapshot.status === 'Paused' ? session.resume() : session.pause())
+  }
+
+  const stopSession = () => setSessionSnapshot(sessionRef.current!.stop())
 
   useEffect(() => {
     let active = true
@@ -44,6 +76,10 @@ export default function App() {
     let frames = 0
     let fpsStarted = performance.now()
 
+    const observeSession = (snapshot: PhaseSnapshot, timestampMs: number) => {
+      setSessionSnapshot(sessionRef.current!.observe(snapshot, timestampMs))
+    }
+
     const pollStatus = async () => {
       while (active) {
         try {
@@ -52,13 +88,14 @@ export default function App() {
           const status = (await response.json()) as BridgeStatus
           if (!active) break
           setBridgeConnected(status.connected)
-          setBridgeState(status.state)
+          setBridgeState(status.state ?? (status.connected ? 'connected' : 'recovering'))
           setBridgeMessage(status.connected ? null : status.error)
-          setRestartCount(status.restartCount)
+          setRestartCount(status.restartCount ?? 0)
           if (!status.connected) {
             setViewState('waiting')
             detectorRef.current!.reset()
             setPhaseSnapshot(notReady())
+            observeSession(notReady(), performance.now())
             setFps(0)
             setLandmarkCount(0)
           } else {
@@ -72,6 +109,7 @@ export default function App() {
             setViewState('error')
             detectorRef.current!.reset()
             setPhaseSnapshot(notReady())
+            observeSession(notReady(), performance.now())
             setFps(0)
             setLandmarkCount(0)
           }
@@ -106,6 +144,7 @@ export default function App() {
             if (now - lastDetectorCheck >= 200) {
               const snapshot = detectorRef.current!.missing(now)
               setPhaseSnapshot(snapshot)
+              observeSession(snapshot, now)
               setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
               lastDetectorCheck = now
             }
@@ -119,6 +158,7 @@ export default function App() {
             if (now - lastDetectorCheck >= 200) {
               const snapshot = detectorRef.current!.missing(now)
               setPhaseSnapshot(snapshot)
+              observeSession(snapshot, now)
               setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
               lastDetectorCheck = now
             }
@@ -147,6 +187,7 @@ export default function App() {
           const result = tracker.detectForVideo(canvas, timestamp)
           const snapshot = detectorRef.current!.update(result, timestamp)
           setPhaseSnapshot(snapshot)
+          observeSession(snapshot, timestamp)
           setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
           lastDetectorCheck = timestamp
           if (result.landmarks.length > 0) {
@@ -167,6 +208,7 @@ export default function App() {
           if (active) {
             setError(`Frame processing failed: ${cause instanceof Error ? cause.message : String(cause)}`)
             setViewState('error')
+            observeSession(notReady(), performance.now())
           }
           await delay(500)
         }
@@ -204,7 +246,7 @@ export default function App() {
         <p>Live Kinect pose tracking for squats and push-ups, powered by MediaPipe Pose Landmarker Full.</p>
       </section>
       <section className="mode-picker" aria-label="Exercise mode">
-        <div className="mode-copy"><span>EXERCISE MODE</span><p>{selectedExercise.framingTip} Phase and joint angles update live.</p></div>
+        <div className="mode-copy"><span>EXERCISE MODE</span><p>{isSessionOpen ? 'Stop the current session to change exercises.' : `${selectedExercise.framingTip} Phase and joint angles update live.`}</p></div>
         <div className="mode-options">
           {exerciseModes.map((mode) => (
             <button
@@ -212,11 +254,24 @@ export default function App() {
               key={mode.id}
               className={mode.id === exerciseId ? 'mode-button active' : 'mode-button'}
               aria-pressed={mode.id === exerciseId}
+              disabled={isSessionOpen}
               onClick={() => selectExercise(mode.id)}
             >
               {mode.label}
             </button>
           ))}
+        </div>
+      </section>
+      <section className="session-panel" aria-label="Exercise session">
+        <div className="session-count"><span>COMPLETED REPETITIONS</span><strong aria-live="polite">{sessionSnapshot.repetitions}</strong><small>{sessionSnapshot.status === 'Idle' ? selectedExercise.label : exerciseModes.find((mode) => mode.id === sessionSnapshot.exercise)!.label}</small></div>
+        <div className="session-main">
+          <div className="session-status"><span>SESSION STATUS</span><strong aria-live="polite">{sessionSnapshot.status}</strong><p>{sessionInstructions[sessionSnapshot.status]}</p></div>
+          <div className="session-controls">
+            <button type="button" className="session-button primary" onClick={startSession} disabled={isSessionOpen}>Start</button>
+            <button type="button" className="session-button" onClick={pauseOrResume} disabled={!isSessionOpen}>{sessionSnapshot.status === 'Paused' ? 'Resume' : 'Pause'}</button>
+            <button type="button" className="session-button" onClick={stopSession} disabled={!isSessionOpen}>Stop</button>
+          </div>
+          {sessionSnapshot.summary && <div className="session-summary" role="status"><strong>Session complete</strong><span>{exerciseModes.find((mode) => mode.id === sessionSnapshot.summary?.exercise)?.label}: {sessionSnapshot.summary.repetitions} completed {sessionSnapshot.summary.repetitions === 1 ? 'repetition' : 'repetitions'}</span></div>}
         </div>
       </section>
       <section className="workspace" aria-label="Live camera workspace">

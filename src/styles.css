@@ -97,6 +97,30 @@ h1 em { color: #ff4056; font-style: normal; }
 .mode-button:hover, .mode-button:focus-visible { border-color: #ff7182; color: #fff; }
 .mode-button:focus-visible { outline: 2px solid #ff7182; outline-offset: 2px; }
 .mode-button.active { border-color: #ff4056; background: #a72135; color: #fff; }
+.mode-button:disabled { cursor: not-allowed; opacity: .55; }
+
+.session-panel {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  margin-bottom: 22px;
+  border: 1px solid #61343e;
+  background: linear-gradient(115deg, #301b22, #171619 42%);
+}
+.session-count { padding: 20px 24px; border-right: 1px solid #61343e; }
+.session-count > span, .session-status > span { display: block; color: #c2a7ae; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+.session-count strong { display: block; color: #ff5265; font: 700 64px/1 'Space Grotesk'; margin: 9px 0 2px; }
+.session-count small { color: #e4c9cf; font-size: 12px; }
+.session-main { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px 24px; padding: 20px 24px; }
+.session-status strong { display: block; font: 600 23px 'Space Grotesk'; margin-top: 5px; }
+.session-status p { color: #b7adb0; font-size: 12px; line-height: 1.5; margin: 5px 0 0; }
+.session-controls { display: flex; gap: 8px; flex-shrink: 0; }
+.session-button { min-width: 78px; padding: 10px 14px; border: 1px solid #80505b; background: #211a1d; color: #f5e7eb; font: 700 12px 'DM Sans', sans-serif; cursor: pointer; }
+.session-button.primary { background: #b4263c; border-color: #ec4960; color: #fff; }
+.session-button:hover:not(:disabled), .session-button:focus-visible { border-color: #ff8493; background: #622532; }
+.session-button:focus-visible { outline: 2px solid #ff8493; outline-offset: 2px; }
+.session-button:disabled { opacity: .45; cursor: not-allowed; }
+.session-summary { width: 100%; display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid #493039; padding-top: 12px; color: #d7bac1; font-size: 12px; }
+.session-summary strong { color: #ff8493; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 22px; }
 .stage, .panel, .metric, .hint, .error-panel {
@@ -257,6 +281,7 @@ footer { padding: 40px 0; color: #8f7d82; font-size: 10px; font-weight: 700; let
 footer span { margin: 0 9px; color: #b14353; }
 
 @media (max-width: 900px) {
+  .session-panel { grid-template-columns: 150px minmax(0, 1fr); }
   .workspace { grid-template-columns: 1fr; }
   .sidebar { display: grid; grid-template-columns: 1fr 1fr; }
   .phase-panel { grid-column: 1 / -1; }
@@ -272,6 +297,12 @@ footer span { margin: 0 9px; color: #b14353; }
   .mode-picker { align-items: stretch; flex-direction: column; gap: 14px; }
   .mode-options { width: 100%; }
   .mode-button { flex: 1; }
+  .session-panel { grid-template-columns: 1fr; }
+  .session-count { border-right: 0; border-bottom: 1px solid #61343e; padding: 17px 20px; }
+  .session-count strong { font-size: 48px; }
+  .session-main { padding: 17px 20px; }
+  .session-controls { width: 100%; }
+  .session-button { flex: 1; }
   .workspace { gap: 14px; }
   .stage { padding: 10px; }
   .sidebar { display: flex; }

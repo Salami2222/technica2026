@@ -9,7 +9,13 @@ Choose **Squat** or **Push-up** in the app. Both modes share the same live track
 
 The app displays smoothed joint angles and separate tracking status. Squats need a visible hip, knee, and ankle for the primary knee angle; the shoulder and hip angle are optional. Push-ups need a visible shoulder, elbow, and wrist for the primary elbow angle; the hip and ankle are optional after a side-on view has been established. Facial landmarks are never used for phase detection. The initial visibility threshold is **0.40**.
 
-If essential joints disappear briefly, **Partial Tracking** preserves the last phase for up to **2 seconds** and hides angle readings rather than reusing old measurements. The first reliable observation after an occlusion or side switch reinitializes smoothing and cannot advance the phase by itself. After more than 2 seconds without reliable measurements, the detector resets and shows **Tracking Lost**. **Kinect Disconnected** means the camera feed itself stopped, separate from landmark occlusion. Initial visibility, angle, movement, smoothing, and side-switch hysteresis values are in `src/analysis/config.ts` for later calibration. These phases are movement labels only; they do not count repetitions or judge form.
+If essential joints disappear briefly, **Partial Tracking** preserves the last phase for up to **2 seconds** and hides angle readings rather than reusing old measurements. The first reliable observation after an occlusion or side switch reinitializes smoothing and cannot advance the phase by itself. After more than 2 seconds without reliable measurements, the detector resets and shows **Tracking Lost**. **Kinect Disconnected** means the camera feed itself stopped, separate from landmark occlusion. Initial visibility, angle, movement, smoothing, and side-switch hysteresis values are in `src/analysis/config.ts` for later calibration. Phase labels describe movement; the separate session controller counts completed cycles without judging form.
+
+## Exercise sessions
+
+Select **Squat** or **Push-up**, then press **Start**. The counter waits for a stable starting position for **500 ms**: extended legs for squats, or extended arms and an aligned shoulder–hip–ankle line for push-ups. The start pose arms the counter but does not count as a repetition. A rep requires every observed phase in order and a stable return to the start pose for **180 ms**. The session shows **Ready** between reps and **Recording** during a movement.
+
+**Pause** preserves completed reps and discards any unfinished movement. **Resume** waits for the starting pose again. Unreliable pose tracking also discards an unfinished movement and suspends counting until the start pose is re-established; it never resets completed reps. **Stop** ends the session immediately and shows the exercise and total reps. Starting a new session resets the count. Exercise tabs are locked while a session is active. The hold times and initial push-up alignment threshold are in `src/session/config.ts` for calibration.
 
 ## Requirements
 
@@ -53,7 +59,7 @@ Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` an
 
 Kinect capture runs in a separate child process. If no frame arrives for more than **5 seconds** (including during startup), the bridge terminates that process and starts a fresh one after **2 seconds**. It repeats until frames return, without restarting the HTTP server. The app shows **Recovering** and the latest capture message during this time. Check `http://127.0.0.1:8765/api/status` for `state`, `error`, `ageSeconds`, and `restartCount`; `connected` becomes true again after a new frame arrives. A browser refresh is not required.
 
-Run `npm test` for synthetic movement-cycle, temporary occlusion, tracking-loss, and left/right switching checks. Run `python -m unittest discover -s tests -p 'test_*.py'` from the activated virtual environment for simulated frozen capture, recovery, API, and worker cleanup checks. Physical Kinect testing is still needed to tune visibility and movement thresholds under real lighting, camera angles, occlusion, and USB interruptions.
+Run `npm test` for synthetic movement-cycle, temporary occlusion, tracking-loss, left/right switching, and exercise-session counting checks. Run `python -m unittest discover -s tests -p 'test_*.py'` from the activated virtual environment for simulated frozen capture, recovery, API, and worker cleanup checks. Physical Kinect testing is still needed to tune visibility, movement, start-pose, and return-hold thresholds under real lighting, camera angles, occlusion, and USB interruptions.
 
 ## Troubleshooting
 
@@ -64,4 +70,4 @@ Run `npm test` for synthetic movement-cycle, temporary occlusion, tracking-loss,
 - **Pose model failed to load:** Run `npm run prepare:assets` again, then reload the page.
 - **No body detected:** Show your full body in the RGB image, use even lighting, and avoid heavy occlusion.
 
-Only RGB is read for this milestone. The camera view currently draws a 2D skeleton overlay from MediaPipe's pose landmarks; joint-angle calculations use its 3D world landmarks. Depth integration, repetition counting, inverse kinematics, and form evaluation are future work.
+Only RGB is read for this milestone. The camera view currently draws a 2D skeleton overlay from MediaPipe's pose landmarks; joint-angle calculations use its 3D world landmarks. Depth integration, inverse kinematics, and form evaluation are future work.
