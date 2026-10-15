@@ -29,12 +29,12 @@ export function drawSkeleton(
   const drawing = new DrawingUtils(context)
   for (const pose of landmarks) {
     drawing.drawConnectors(pose, PoseLandmarker.POSE_CONNECTIONS, {
-      color: '#86f3c5',
+      color: '#ff4b5f',
       lineWidth: 3,
     })
     drawing.drawLandmarks(pose, {
       color: '#ffffff',
-      fillColor: '#18d68c',
+      fillColor: '#e4263d',
       radius: 4,
       lineWidth: 1,
     })

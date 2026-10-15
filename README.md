@@ -1,6 +1,6 @@
-# Technica2026
+# Kinetiq V2
 
-The first milestone shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
+Kinetiq V2 is the live pose viewer in the `technica2026` repository. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
 
 ## Requirements
 

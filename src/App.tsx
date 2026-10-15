@@ -142,7 +142,7 @@ export default function App() {
   return (
     <main className="app">
       <header className="header">
-        <div className="brand"><span className="brand-mark">T</span><div><strong>TECHNICA<span>2026</span></strong><small>Movement intelligence lab</small></div></div>
+        <div className="brand"><span className="brand-mark">K</span><div><strong>KINETIQ <span>V2</span></strong><small>Movement intelligence lab</small></div></div>
         <div className="header-tag">KINECT V1 · RGB</div>
       </header>
       <section className="intro">
@@ -166,7 +166,7 @@ export default function App() {
           <div className="hint"><span>✦</span><p>Stand far enough back for your head, hands, and feet to fit inside the frame. Bright, even lighting improves tracking.</p></div>
         </aside>
       </section>
-      <footer>TECHNICA2026 <span>•</span> KINECT V1 + MEDIAPIPE <span>•</span> LOCAL SESSION</footer>
+      <footer>KINETIQ V2 <span>•</span> KINECT V1 + MEDIAPIPE <span>•</span> LOCAL SESSION</footer>
     </main>
   )
 }
