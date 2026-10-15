@@ -1,25 +1,14 @@
-import type { PoseLandmarkerResult } from '@mediapipe/tasks-vision'
+import { PushUpDetector } from './analysis/pushUp.ts'
+import { SquatDetector } from './analysis/squat.ts'
+import type { ExerciseDetector } from './analysis/types.ts'
 
 export type ExerciseId = 'squat' | 'push-up'
-
-// Future analyzers can be implemented independently for each exercise.
-// Mode selection does not run an analyzer in this milestone.
-export type ExerciseAnalysis = {
-  repetitionCount: number
-  jointAnglesDegrees: Record<string, number>
-  feedback: string[]
-}
-
-export type ExerciseAnalyzer = (
-  landmarks: PoseLandmarkerResult['landmarks'][number],
-  timestampMs: number,
-) => ExerciseAnalysis
 
 export type ExerciseMode = {
   id: ExerciseId
   label: string
   framingTip: string
-  analyzer?: ExerciseAnalyzer
+  createDetector: () => ExerciseDetector
 }
 
 export const exerciseModes: readonly ExerciseMode[] = [
@@ -27,10 +16,16 @@ export const exerciseModes: readonly ExerciseMode[] = [
     id: 'squat',
     label: 'Squat',
     framingTip: 'Keep your full body visible in the frame.',
+    createDetector: () => new SquatDetector(),
   },
   {
     id: 'push-up',
     label: 'Push-up',
-    framingTip: 'Position the camera so your full body stays visible.',
+    framingTip: 'Use a side view with your shoulder, arm, hip, and ankle visible.',
+    createDetector: () => new PushUpDetector(),
   },
 ]
+
+export function createExerciseDetector(id: ExerciseId): ExerciseDetector {
+  return exerciseModes.find((mode) => mode.id === id)!.createDetector()
+}

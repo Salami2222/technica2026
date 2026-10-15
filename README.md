@@ -2,7 +2,12 @@
 
 Kinetiq V2 is the live pose viewer in the `technica2026` repository. Its exercise scope is **squats and push-ups**. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
 
-Choose **Squat** or **Push-up** in the app. Both modes currently share the same live tracking view. Their definitions live in `src/exercises.ts`, which provides a place for independent repetition counting, joint-angle analysis, and form feedback later. Selecting a mode does not perform any of those analyses yet.
+Choose **Squat** or **Push-up** in the app. Both modes share the same live tracking view, but each has its own phase detector under `src/analysis/`. Switching modes resets phase detection.
+
+- **Squat:** Standing → Descending → Bottom → Ascending, using hip and knee angles from the more visible leg.
+- **Push-up:** Top → Lowering → Bottom → Pushing, using elbow bend, shoulder travel, and body position from the more visible side. A side-on camera view is recommended.
+
+The app displays smoothed joint angles and shows **Not Ready** or **Tracking Lost** when it cannot determine a phase reliably. Initial visibility, angle, movement, smoothing, and hysteresis values are in `src/analysis/config.ts` for later calibration. These phases are movement labels only; they do not count repetitions or judge form.
 
 ## Requirements
 
@@ -42,7 +47,9 @@ python backend/server.py
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` and Vite forwards `/api` requests to it. The app reports Kinect connection, pose model status, landmark count, and processed FPS. Step back so your full body is visible. The bridge automatically retries capture after a disconnect.
+Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` and Vite forwards `/api` requests to it. The app reports exercise phase, joint angles, Kinect connection, pose model status, landmark count, and processed FPS. Step back so your full body is visible. The bridge automatically retries capture after a disconnect.
+
+Run `npm test` for synthetic movement-cycle and tracking-loss checks. The actual angle thresholds still need calibration with people exercising in front of the Kinect.
 
 ## Troubleshooting
 
@@ -52,4 +59,4 @@ Open **http://127.0.0.1:5173**. The Python bridge listens on `127.0.0.1:8765` an
 - **Pose model failed to load:** Run `npm run prepare:assets` again, then reload the page.
 - **No body detected:** Show your full body in the RGB image, use even lighting, and avoid heavy occlusion.
 
-Only RGB is read for this milestone. Depth, repetition counts, joint angles, and form feedback are future work.
+Only RGB is read for this milestone. The camera view currently draws a 2D skeleton overlay from MediaPipe's pose landmarks; joint-angle calculations use its 3D world landmarks. Depth integration, repetition counting, inverse kinematics, and form evaluation are future work.

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PoseLandmarker } from '@mediapipe/tasks-vision'
-import { exerciseModes } from './exercises'
+import { createExerciseDetector, exerciseModes } from './exercises'
 import type { ExerciseId } from './exercises'
+import { notReady } from './analysis/types.ts'
+import type { ExerciseDetector } from './analysis/types.ts'
 import { createPoseTracker, drawSkeleton } from './pose'
 
 type BridgeStatus = { connected: boolean; sequence: number; error: string | null }
@@ -18,7 +20,17 @@ export default function App() {
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [exerciseId, setExerciseId] = useState<ExerciseId>('squat')
+  const detectorRef = useRef<ExerciseDetector | null>(null)
+  detectorRef.current ??= createExerciseDetector('squat')
+  const [phaseSnapshot, setPhaseSnapshot] = useState(notReady)
   const selectedExercise = exerciseModes.find((mode) => mode.id === exerciseId)!
+
+  const selectExercise = (id: ExerciseId) => {
+    if (id === exerciseId) return
+    detectorRef.current = createExerciseDetector(id)
+    setPhaseSnapshot(notReady())
+    setExerciseId(id)
+  }
 
   useEffect(() => {
     let active = true
@@ -38,8 +50,10 @@ export default function App() {
           if (status.error) {
             setError(status.error)
             setViewState('error')
+            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
           } else if (!status.connected) {
             setViewState('waiting')
+            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
           } else {
             setError(null)
           }
@@ -48,6 +62,7 @@ export default function App() {
             setBridgeConnected(false)
             setError('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
             setViewState('error')
+            setPhaseSnapshot(detectorRef.current!.missing(performance.now()))
           }
         }
         await delay(1500)
@@ -100,7 +115,9 @@ export default function App() {
           bitmap.close()
 
           // MediaPipe requires a monotonic timestamp for VIDEO mode.
-          const result = tracker.detectForVideo(canvas, performance.now())
+          const timestamp = performance.now()
+          const result = tracker.detectForVideo(canvas, timestamp)
+          setPhaseSnapshot(detectorRef.current!.update(result, timestamp))
           if (result.landmarks.length > 0) {
             setViewState('tracking')
             setLandmarkCount(result.landmarks[0].length)
@@ -155,7 +172,7 @@ export default function App() {
         <p>Live Kinect pose tracking for squats and push-ups, powered by MediaPipe Pose Landmarker Full.</p>
       </section>
       <section className="mode-picker" aria-label="Exercise mode">
-        <div className="mode-copy"><span>EXERCISE MODE</span><p>{selectedExercise.framingTip} Reps, angles, and form feedback are coming later.</p></div>
+        <div className="mode-copy"><span>EXERCISE MODE</span><p>{selectedExercise.framingTip} Phase and joint angles update live.</p></div>
         <div className="mode-options">
           {exerciseModes.map((mode) => (
             <button
@@ -163,7 +180,7 @@ export default function App() {
               key={mode.id}
               className={mode.id === exerciseId ? 'mode-button active' : 'mode-button'}
               aria-pressed={mode.id === exerciseId}
-              onClick={() => setExerciseId(mode.id)}
+              onClick={() => selectExercise(mode.id)}
             >
               {mode.label}
             </button>
@@ -180,6 +197,19 @@ export default function App() {
           <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><span>{selectedExercise.label.toUpperCase()} MODE · LIVE SESSION</span></div>
         </div>
         <aside className="sidebar">
+          <div className={`panel phase-panel ${phaseSnapshot.phase === 'Tracking Lost' || phaseSnapshot.phase === 'Not Ready' ? 'phase-unavailable' : ''}`}>
+            <div className="panel-label">{selectedExercise.label.toUpperCase()} · MOVEMENT PHASE</div>
+            <h2 aria-live="polite">{phaseSnapshot.phase}</h2>
+            <p>{phaseSnapshot.detail}</p>
+            <div className="angle-grid">
+              {phaseSnapshot.angles.length > 0 ? phaseSnapshot.angles.map((angle) => (
+                <div className="angle-reading" key={angle.label}>
+                  <span>{angle.label}</span><strong>{Math.round(angle.degrees)}°</strong>
+                </div>
+              )) : <span className="angles-empty">Angles available when joints are visible.</span>}
+            </div>
+            {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
+          </div>
           <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${viewState}`}><span /></div><h2>{statusText}</h2><p>{viewState === 'tracking' ? 'Skeleton locked onto your movement.' : viewState === 'no-pose' ? 'Step back until your full body is visible.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.'}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div></div></div>
           <div className="metrics"><div className="metric"><span>TRACKING FPS</span><strong>{fps}</strong><small>processed frames / sec</small></div><div className="metric"><span>LANDMARKS</span><strong>{landmarkCount}<i>/ 33</i></strong><small>{landmarkCount ? 'body points visible' : 'awaiting subject'}</small></div></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
