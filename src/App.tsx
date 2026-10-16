@@ -53,6 +53,7 @@ export default function App() {
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [exerciseId, setExerciseId] = useState<ModeId>('squat')
+  const [workspaceTab, setWorkspaceTab] = useState<'live' | 'setup'>('live')
   const modeRef = useRef<ModeId>('squat')
   const [handedness, setHandedness] = useState<Handedness>('right')
   const golfRef = useRef(new GolfSwingSession('right'))
@@ -247,6 +248,7 @@ export default function App() {
           const timestamp = performance.now()
           lastFrameAt = timestamp
           const result = tracker.detectForVideo(canvas, timestamp)
+          setFraming(assessFraming(modeRef.current, result))
           if (modeRef.current === 'golf') {
             const snapshot = golfRef.current.update(result, timestamp)
             if (snapshot.swings > latestSwingCountRef.current) setSelectedSwingId(null)
@@ -254,7 +256,6 @@ export default function App() {
             setGolfSnapshot(snapshot)
             setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
           } else {
-            setFraming(assessFraming(modeRef.current as ExerciseId, result))
             const snapshot = detectorRef.current!.update(result, timestamp)
             setPhaseSnapshot(snapshot)
             observeSession(snapshot, timestamp, result)
@@ -331,10 +332,17 @@ export default function App() {
       </section>
       <section className={isGolf ? 'workspace golf-workspace' : 'workspace'} aria-label="Live camera workspace">
         <div className="stage">
-          <div className="stage-top"><span className="live-chip"><span /> LIVE VIEW</span><span className="resolution">640 × 480 RGB</span></div>
-          <div className="video-area">
-            <canvas ref={canvasRef} width="640" height="480" aria-label="Live Kinect camera feed with skeleton overlay" />
-            {!bridgeConnected && <div className="empty-state"><div className="reticle">＋</div><strong>{bridgeState === 'recovering' ? 'Restarting camera capture' : 'Waiting for camera feed'}</strong><span>{bridgeMessage ?? 'Connect your Kinect V1 and start the Python bridge.'}</span></div>}
+          <div className="stage-top">
+            <div className="stage-tabs" role="tablist" aria-label={`${selectedExercise.label} workspace view`}>
+              <button id="live-view-tab" type="button" role="tab" aria-selected={workspaceTab === 'live'} aria-controls="workspace-panel" onClick={() => setWorkspaceTab('live')}>Live</button>
+              <button id="setup-view-tab" type="button" role="tab" aria-selected={workspaceTab === 'setup'} aria-controls="workspace-panel" onClick={() => setWorkspaceTab('setup')}>Setup / Reference</button>
+            </div>
+            <span className="resolution">{workspaceTab === 'live' ? '640 × 480 RGB' : selectedExercise.label.toUpperCase() + ' · CAMERA GUIDE'}</span>
+          </div>
+          <div id="workspace-panel" className={workspaceTab === 'setup' ? 'video-area reference-active' : 'video-area'} role="tabpanel" aria-labelledby={workspaceTab === 'live' ? 'live-view-tab' : 'setup-view-tab'}>
+            <canvas ref={canvasRef} width="640" height="480" aria-label="Live Kinect camera feed with skeleton overlay" aria-hidden={workspaceTab === 'setup'} />
+            {workspaceTab === 'setup' && <CameraGuide mode={exerciseId} framing={framing} connected={bridgeConnected} modelReady={modelReady} />}
+            {!bridgeConnected && workspaceTab === 'live' && <div className="empty-state"><div className="reticle">＋</div><strong>{bridgeState === 'recovering' ? 'Restarting camera capture' : 'Waiting for camera feed'}</strong><span>{bridgeMessage ?? 'Connect your Kinect V1 and start the Python bridge.'}</span></div>}
           </div>
           <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><div className="feed-metrics"><span>FPS <strong>{fps}</strong></span><span>LANDMARKS <strong>{landmarkCount}<i>/ 33</i></strong></span></div></div>
         </div>
@@ -367,7 +375,6 @@ export default function App() {
             {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
           </div>
           <FormDashboard session={sessionSnapshot} selectedRep={selectedFormRep} onSelectRep={setSelectedFormRep} />
-          <CameraGuide exercise={exerciseId as ExerciseId} framing={framing} />
           <div className="exercise-system"><span>{statusText}</span><span>Kinect <b>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : 'Offline'}</b></span><span>Pose <b>{modelReady ? 'Ready' : 'Loading'}</b></span><span>Restarts <b>{restartCount}</b></span></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
           </>}

@@ -52,3 +52,45 @@ test('push-up distinguishes side profile, camera elevation, crop, and missing jo
   assert.match(assessFraming('push-up', wrist).suggestion, /shoulder, elbow, and wrist/i)
   assert.equal(assessFraming('push-up', { landmarks: [] }).status, 'Tracking Unavailable')
 })
+
+function golfPose() {
+  const landmarks = Array.from({ length: 33 }, () => landmark(0.5, 0.5, 0))
+  landmarks[11] = landmark(0.43, 0.31)
+  landmarks[12] = landmark(0.57, 0.31)
+  landmarks[23] = landmark(0.46, 0.55)
+  landmarks[24] = landmark(0.54, 0.55)
+  landmarks[15] = landmark(0.49, 0.58)
+  landmarks[16] = landmark(0.51, 0.58)
+  landmarks[27] = landmark(0.41, 0.87)
+  landmarks[28] = landmark(0.59, 0.87)
+  return { landmarks: [landmarks] }
+}
+
+test('golf setup uses face-on shoulder width and room for the entire swing', () => {
+  assert.equal(assessFraming('golf', golfPose()).status, 'Ready')
+  const edgeOn = golfPose()
+  edgeOn.landmarks[0][12].x = 0.46
+  assert.match(assessFraming('golf', edgeOn).suggestion, /face the Kinect squarely/i)
+  const narrow = golfPose()
+  narrow.landmarks[0][15].x = 0.91
+  assert.match(assessFraming('golf', narrow).suggestion, /room for the backswing/i)
+  const nearEdge = golfPose()
+  nearEdge.landmarks[0][12].x = 0.85
+  assert.match(assessFraming('golf', nearEdge).suggestion, /room for the backswing/i)
+})
+
+test('golf setup reports missing torso, hands, and feet without requiring a face landmark', () => {
+  const noHead = golfPose()
+  noHead.landmarks[0][0].visibility = 0
+  assert.equal(assessFraming('golf', noHead).status, 'Ready')
+  const noHip = golfPose()
+  noHip.landmarks[0][23].visibility = 0
+  assert.match(assessFraming('golf', noHip).suggestion, /shoulders and hips/i)
+  const noHands = golfPose()
+  noHands.landmarks[0][15].visibility = 0
+  noHands.landmarks[0][16].visibility = 0
+  assert.match(assessFraming('golf', noHands).suggestion, /hands visible/i)
+  const noFeet = golfPose()
+  noFeet.landmarks[0][27].visibility = 0
+  assert.match(assessFraming('golf', noFeet).suggestion, /both feet/i)
+})
