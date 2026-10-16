@@ -7,12 +7,26 @@ import type { ExerciseDetector, PhaseSnapshot } from './analysis/types.ts'
 import { createPoseTracker, drawSkeleton } from './pose'
 import { ExerciseSession } from './session/session.ts'
 import type { SessionStatus } from './session/session.ts'
+import { GolfSwingSession } from './golf/golf.ts'
+import type { GolfStatus, Handedness } from './golf/types.ts'
+import { GolfDashboard } from './golf/GolfDashboard.tsx'
 
 type BridgeStatus = { connected: boolean; state?: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount?: number }
 type ViewState = 'loading' | 'waiting' | 'tracking' | 'partial' | 'lost' | 'no-pose' | 'error'
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 const sessionOpen = (status: SessionStatus) => status !== 'Idle' && status !== 'Completed'
+type ModeId = ExerciseId | 'golf'
+const modeOptions: { id: ModeId; label: string }[] = [...exerciseModes, { id: 'golf', label: 'Golf Swing' }]
+const golfInstructions: Record<GolfStatus, string> = {
+  Idle: 'Choose a hand and start a swing session.',
+  'Waiting for Address': 'Face the Kinect and hold a steady address.',
+  Ready: 'Make a full practice swing, then hold your finish.',
+  Recording: 'Swing in progress. Continue through the finish.',
+  Paused: 'Swings saved. Resume and return to address.',
+  Completed: 'Session complete. Review your recorded swings.',
+  'Tracking Lost': 'Movement paused until reliable landmarks return.',
+}
 
 const sessionInstructions: Record<SessionStatus, string> = {
   Idle: 'Choose an exercise, then start a new session.',
@@ -35,25 +49,43 @@ export default function App() {
   const [fps, setFps] = useState(0)
   const [landmarkCount, setLandmarkCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [exerciseId, setExerciseId] = useState<ExerciseId>('squat')
+  const [exerciseId, setExerciseId] = useState<ModeId>('squat')
+  const modeRef = useRef<ModeId>('squat')
+  const [handedness, setHandedness] = useState<Handedness>('right')
+  const golfRef = useRef(new GolfSwingSession('right'))
+  const latestSwingCountRef = useRef(0)
+  const [golfSnapshot, setGolfSnapshot] = useState(() => golfRef.current.snapshot())
+  const [selectedSwingId, setSelectedSwingId] = useState<number | null>(null)
   const detectorRef = useRef<ExerciseDetector | null>(null)
   detectorRef.current ??= createExerciseDetector('squat')
   const sessionRef = useRef<ExerciseSession | null>(null)
   sessionRef.current ??= new ExerciseSession('squat')
   const [phaseSnapshot, setPhaseSnapshot] = useState(notReady)
   const [sessionSnapshot, setSessionSnapshot] = useState(() => sessionRef.current!.snapshot())
-  const selectedExercise = exerciseModes.find((mode) => mode.id === exerciseId)!
-  const isSessionOpen = sessionOpen(sessionSnapshot.status)
+  const selectedExercise = modeOptions.find((mode) => mode.id === exerciseId)!
+  const isGolf = exerciseId === 'golf'
+  const isSessionOpen = isGolf
+    ? golfSnapshot.status !== 'Idle' && golfSnapshot.status !== 'Completed'
+    : sessionOpen(sessionSnapshot.status)
+  const displayedSwing = golfSnapshot.history.find((swing) => swing.id === selectedSwingId) ?? golfSnapshot.latest
 
-  const selectExercise = (id: ExerciseId) => {
+  const selectExercise = (id: ModeId) => {
     if (id === exerciseId || isSessionOpen) return
-    detectorRef.current = createExerciseDetector(id)
+    modeRef.current = id
+    if (id !== 'golf') detectorRef.current = createExerciseDetector(id)
     setPhaseSnapshot(notReady())
     setExerciseId(id)
   }
 
   const startSession = () => {
     if (isSessionOpen) return
+    if (isGolf) {
+      golfRef.current = new GolfSwingSession(handedness)
+      latestSwingCountRef.current = 0
+      setGolfSnapshot(golfRef.current.start())
+      setSelectedSwingId(null)
+      return
+    }
     detectorRef.current = createExerciseDetector(exerciseId)
     setPhaseSnapshot(notReady())
     sessionRef.current = new ExerciseSession(exerciseId)
@@ -61,11 +93,15 @@ export default function App() {
   }
 
   const pauseOrResume = () => {
+    if (isGolf) {
+      setGolfSnapshot(golfSnapshot.status === 'Paused' ? golfRef.current.resume() : golfRef.current.pause())
+      return
+    }
     const session = sessionRef.current!
     setSessionSnapshot(sessionSnapshot.status === 'Paused' ? session.resume() : session.pause())
   }
 
-  const stopSession = () => setSessionSnapshot(sessionRef.current!.stop())
+  const stopSession = () => isGolf ? setGolfSnapshot(golfRef.current.stop()) : setSessionSnapshot(sessionRef.current!.stop())
 
   useEffect(() => {
     let active = true
@@ -78,6 +114,18 @@ export default function App() {
 
     const observeSession = (snapshot: PhaseSnapshot, timestampMs: number) => {
       setSessionSnapshot(sessionRef.current!.observe(snapshot, timestampMs))
+    }
+    const observeMissing = (timestampMs: number) => {
+      if (modeRef.current === 'golf') {
+        const snapshot = golfRef.current.missing(timestampMs)
+        setGolfSnapshot(snapshot)
+        setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+      } else {
+        const snapshot = detectorRef.current!.missing(timestampMs)
+        setPhaseSnapshot(snapshot)
+        observeSession(snapshot, timestampMs)
+        setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+      }
     }
 
     const pollStatus = async () => {
@@ -93,9 +141,12 @@ export default function App() {
           setRestartCount(status.restartCount ?? 0)
           if (!status.connected) {
             setViewState('waiting')
-            detectorRef.current!.reset()
-            setPhaseSnapshot(notReady())
-            observeSession(notReady(), performance.now())
+            if (modeRef.current === 'golf') setGolfSnapshot(golfRef.current.missing(performance.now()))
+            else {
+              detectorRef.current!.reset()
+              setPhaseSnapshot(notReady())
+              observeSession(notReady(), performance.now())
+            }
             setFps(0)
             setLandmarkCount(0)
           } else {
@@ -107,9 +158,12 @@ export default function App() {
             setBridgeState('offline')
             setBridgeMessage('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
             setViewState('error')
-            detectorRef.current!.reset()
-            setPhaseSnapshot(notReady())
-            observeSession(notReady(), performance.now())
+            if (modeRef.current === 'golf') setGolfSnapshot(golfRef.current.missing(performance.now()))
+            else {
+              detectorRef.current!.reset()
+              setPhaseSnapshot(notReady())
+              observeSession(notReady(), performance.now())
+            }
             setFps(0)
             setLandmarkCount(0)
           }
@@ -142,10 +196,7 @@ export default function App() {
             const now = performance.now()
             if (now - lastFrameAt > 1000) setFps(0)
             if (now - lastDetectorCheck >= 200) {
-              const snapshot = detectorRef.current!.missing(now)
-              setPhaseSnapshot(snapshot)
-              observeSession(snapshot, now)
-              setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+              observeMissing(now)
               lastDetectorCheck = now
             }
             await delay(250)
@@ -156,10 +207,7 @@ export default function App() {
             const now = performance.now()
             if (now - lastFrameAt > 1000) setFps(0)
             if (now - lastDetectorCheck >= 200) {
-              const snapshot = detectorRef.current!.missing(now)
-              setPhaseSnapshot(snapshot)
-              observeSession(snapshot, now)
-              setViewState(snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+              observeMissing(now)
               lastDetectorCheck = now
             }
             await delay(15)
@@ -185,10 +233,18 @@ export default function App() {
           const timestamp = performance.now()
           lastFrameAt = timestamp
           const result = tracker.detectForVideo(canvas, timestamp)
-          const snapshot = detectorRef.current!.update(result, timestamp)
-          setPhaseSnapshot(snapshot)
-          observeSession(snapshot, timestamp)
-          setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+          if (modeRef.current === 'golf') {
+            const snapshot = golfRef.current.update(result, timestamp)
+            if (snapshot.swings > latestSwingCountRef.current) setSelectedSwingId(null)
+            latestSwingCountRef.current = snapshot.swings
+            setGolfSnapshot(snapshot)
+            setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+          } else {
+            const snapshot = detectorRef.current!.update(result, timestamp)
+            setPhaseSnapshot(snapshot)
+            observeSession(snapshot, timestamp)
+            setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
+          }
           lastDetectorCheck = timestamp
           if (result.landmarks.length > 0) {
             setLandmarkCount(result.landmarks[0].length)
@@ -208,7 +264,8 @@ export default function App() {
           if (active) {
             setError(`Frame processing failed: ${cause instanceof Error ? cause.message : String(cause)}`)
             setViewState('error')
-            observeSession(notReady(), performance.now())
+            if (modeRef.current === 'golf') setGolfSnapshot(golfRef.current.missing(performance.now()))
+            else observeSession(notReady(), performance.now())
           }
           await delay(500)
         }
@@ -241,9 +298,9 @@ export default function App() {
         <div className="header-tag">KINECT V1 · RGB</div>
       </header>
       <section className="mode-picker" aria-label="Exercise mode">
-        <div className="mode-copy"><span>EXERCISE MODE</span><p>{isSessionOpen ? 'Stop the session to switch exercises.' : selectedExercise.framingTip}</p></div>
+        <div className="mode-copy"><span>EXERCISE MODE</span><p>{isSessionOpen ? 'Stop the session to switch modes.' : isGolf ? 'Face-on practice swings with full-body tracking.' : exerciseModes.find((mode) => mode.id === exerciseId)?.framingTip}</p></div>
         <div className="mode-options">
-          {exerciseModes.map((mode) => (
+          {modeOptions.map((mode) => (
             <button
               type="button"
               key={mode.id}
@@ -257,7 +314,7 @@ export default function App() {
           ))}
         </div>
       </section>
-      <section className="workspace" aria-label="Live camera workspace">
+      <section className={isGolf ? 'workspace golf-workspace' : 'workspace'} aria-label="Live camera workspace">
         <div className="stage">
           <div className="stage-top"><span className="live-chip"><span /> LIVE VIEW</span><span className="resolution">640 × 480 RGB</span></div>
           <div className="video-area">
@@ -266,7 +323,11 @@ export default function App() {
           </div>
           <div className="stage-bottom"><span>POSE LANDMARKER · FULL</span><div className="feed-metrics"><span>FPS <strong>{fps}</strong></span><span>LANDMARKS <strong>{landmarkCount}<i>/ 33</i></strong></span></div></div>
         </div>
-        <aside className="sidebar">
+        <aside className={isGolf ? 'sidebar golf-sidebar' : 'sidebar'}>
+          {isGolf ? <GolfDashboard snapshot={golfSnapshot} result={displayedSwing} handedness={handedness}
+            sessionOpen={isSessionOpen} connected={bridgeConnected} modelReady={modelReady}
+            onHandedness={setHandedness} onStart={startSession} onPause={pauseOrResume} onStop={stopSession}
+            onSelectSwing={setSelectedSwingId} instructions={golfInstructions[golfSnapshot.status]} /> : <>
           <section className="session-panel" aria-label="Exercise session">
             <div className="session-head"><div className="session-count"><span>REPETITIONS</span><strong aria-live="polite">{sessionSnapshot.repetitions}</strong></div><div className="session-status"><span>SESSION</span><strong aria-live="polite">{sessionSnapshot.status}</strong><p>{sessionInstructions[sessionSnapshot.status]}</p></div></div>
             <div className="session-controls">
@@ -292,6 +353,7 @@ export default function App() {
           </div>
           <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${bridgeState === 'recovering' ? 'recovering' : viewState}`}><span /></div><h2>{statusText}</h2><p>{bridgeMessage ?? (viewState === 'tracking' ? 'Required joints are visible and angles are updating.' : viewState === 'partial' ? 'Holding the last phase until reliable joints return.' : viewState === 'lost' ? 'Required joints have been unavailable for over 2 seconds.' : viewState === 'no-pose' ? 'Show the required joints to begin tracking.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.')}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : bridgeState === 'starting' ? 'Starting' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div><div><span>Capture restarts</span><b>{restartCount}</b></div></div></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
+          </>}
         </aside>
       </section>
     </main>

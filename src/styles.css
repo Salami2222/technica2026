@@ -389,3 +389,57 @@ footer span { margin: 0 9px; color: #b14353; }
   .sidebar { display: flex; }
   .status-panel { min-height: 0; }
 }
+
+/* Golf keeps results beside the live feed; only expanded result details scroll. */
+.golf-workspace { grid-template-columns: minmax(0, 1fr) 440px; }
+.golf-sidebar { overflow: hidden; }
+.golf-session { padding: 9px 11px; }
+.golf-session .session-count strong { font-size: 39px; }
+.golf-session .session-controls { margin-top: 6px; }
+.golf-hands { display: flex; align-items: center; gap: 5px; margin-top: 6px; }
+.golf-hands > span { color: #bba7ad; font-size: 9px; font-weight: 700; letter-spacing: .1em; margin-right: 5px; }
+.hand-button { padding: 3px 10px; border: 1px solid #594049; background: #21191d; color: #d0bec3; font-size: 10px; cursor: pointer; }
+.hand-button.active { background: #a72135; border-color: #ff4056; color: #fff; }
+.hand-button:disabled { opacity: .55; cursor: not-allowed; }
+.golf-phase { flex: 0 0 auto; padding: 9px 11px; border-color: #7f3743; }
+.golf-phase-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.golf-phase h2 { font: 700 20px 'Space Grotesk'; color: #ff5b70; margin: 4px 0 2px; }
+.golf-phase .tracking-badge { margin: 0; white-space: nowrap; }
+.golf-phase p { color: #baa9ae; font-size: 10px; line-height: 1.2; margin: 0; }
+.golf-result { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 11px; scrollbar-color: #713642 #1a1518; }
+.golf-result-head { display: flex; align-items: end; justify-content: space-between; gap: 8px; border-bottom: 1px solid #473039; padding-bottom: 5px; }
+.golf-result-head h2 { color: #ff5b70; font: 700 31px 'Space Grotesk'; margin: 1px 0 0; }
+.golf-result-head h2 small { color: #bea5ac; font-size: 14px; }
+.golf-result-head > span { color: #bcaab0; font-size: 11px; white-space: nowrap; }
+.golf-timing { display: flex; flex-wrap: wrap; gap: 5px 13px; padding: 7px 0; color: #b7adb0; font-size: 10px; }
+.golf-timing b { color: #f4f1f2; }
+.golf-category-list details { border-top: 1px solid #3b3034; padding: 4px 0; }
+.golf-category-list summary { display: flex; justify-content: space-between; gap: 8px; color: #f2e9eb; font-size: 11px; cursor: pointer; list-style: none; }
+.golf-category-list summary::-webkit-details-marker { display: none; }
+.golf-category-list summary span:before { content: '▸'; color: #ff7182; margin-right: 6px; }
+.golf-category-list details[open] summary span:before { content: '▾'; }
+.golf-category-list summary b { color: #ff7182; white-space: nowrap; }
+.golf-category-list p { color: #baaab0; font-size: 10px; line-height: 1.35; margin: 5px 0 0 16px; }
+.golf-feedback { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 7px; }
+.golf-feedback b { color: #ff8897; font-size: 10px; }
+.golf-feedback p { color: #cbb8bd; font-size: 10px; line-height: 1.3; margin: 2px 0 0; }
+.golf-measures, .golf-unscored { color: #bcaab0; font-size: 10px; line-height: 1.35; margin: 7px 0 0; }
+.golf-measures { border-top: 1px solid #3b3034; padding-top: 6px; }
+.golf-setup h2 { color: #ff5b70; font: 600 18px 'Space Grotesk'; margin: 7px 0; }
+.golf-setup p { color: #c4afb5; font-size: 11px; line-height: 1.4; }
+.golf-history { border-top: 1px solid #3b3034; margin-top: 8px; padding-top: 7px; }
+.golf-history > div { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.golf-history button { padding: 3px 7px; border: 1px solid #594049; background: #21191d; color: #e9cdd3; font-size: 10px; cursor: pointer; }
+.golf-history button:hover { border-color: #ff7182; }
+.golf-system { display: flex; justify-content: space-between; gap: 7px; padding: 6px 10px; border: 1px solid #3b3034; background: #171619; color: #a99da1; font-size: 10px; text-transform: capitalize; }
+.golf-system b { color: #ff8493; margin-left: 4px; }
+
+@media (max-width: 1000px), (max-height: 650px) {
+  .golf-workspace { grid-template-columns: 1fr; }
+  .golf-sidebar { display: flex; overflow: visible; }
+  .golf-result { overflow: visible; }
+}
+@media (max-width: 650px) {
+  .golf-feedback { grid-template-columns: 1fr; }
+  .golf-system { flex-wrap: wrap; }
+}

@@ -1,6 +1,6 @@
 # Kinetiq V2
 
-Kinetiq V2 is the live pose viewer in the `technica2026` repository. Its exercise scope is **squats and push-ups**. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
+Kinetiq V2 is the live pose viewer in the `technica2026` repository. It supports **squats, push-ups, and golf swing analysis**. It shows Xbox 360 Kinect V1 RGB video with a live 33-landmark skeleton. A small Python process reads `libfreenect_sync`; React renders the frames and runs Google's Pose Landmarker Full model in the browser. All video stays on the Mac.
 
 Choose **Squat** or **Push-up** in the app. Both modes share the same live tracking view, but each has its own phase detector under `src/analysis/`. Switching modes resets phase detection.
 
@@ -16,6 +16,16 @@ If essential joints disappear briefly, **Partial Tracking** preserves the last p
 Select **Squat** or **Push-up**, then press **Start**. The counter waits for a stable starting position for **350 ms**: extended legs for squats, or extended arms and an aligned shoulder–hip–ankle line for push-ups. The start pose arms the counter but does not count as a repetition. A rep counts when a tracked knee or elbow angle descends beyond the exercise's depth threshold and reliably rises back to the starting position. A minimum cycle duration rejects sudden angle spikes. The next rep can begin immediately; no return hold or new starting-position hold is required between reps. The session shows **Ready** between reps and **Recording** during a movement.
 
 **Pause** preserves completed reps and discards any unfinished movement. **Resume** waits for the starting pose again. A brief partial-tracking gap can preserve an unfinished rep only if the returning angle and tracked side establish continuity; the first recovered measurement is never treated as movement. Larger gaps discard only the unfinished cycle, and counting rearms when the start pose is seen without another hold. Completed reps remain saved. **Stop** ends the session immediately and shows the exercise and total reps. Starting a new session resets the count. Exercise tabs are locked while a session is active. Cycle depth, continuity, and timing values are in `src/session/config.ts` for calibration.
+
+## Golf Swing Analysis
+
+Select **Golf Swing**, choose **Right** or **Left**, and press **Start**. Place the Kinect face-on with your entire body visible: both shoulders, hips, ankles, and at least one wrist. A stable address with hands below shoulders enables detection. The app follows the wrists relative to the address stance through **Address → Backswing → Top → Downswing → Follow-through → Finish**. Hold the finish briefly to record a swing. Return to a steady address to record another swing in the same session. Practice swings without a ball are supported. Pause discards only the swing in progress; Stop preserves the current session's results for review.
+
+Each completed swing receives five measured category scores worth 2 points each: setup/posture, head and upper-body stability, balance/lower-body control, tempo, and follow-through/finish. Expand a category in the results card to see the measurement and a suggestion. Results also show timing, normalized hand and body movement, what went well, priorities for the next swing, and scores from earlier swings in the current session. If there are too few reliable measurements or too much missing tracking, the result says **Unable to Score**. Missing head landmarks are excluded from the head measurement; visible shoulder movement is still evaluated. Initial thresholds are documented in `src/golf/config.ts` and can be calibrated from recorded practice sessions.
+
+This is a **single-camera practice estimate**, not professional biomechanical analysis. MediaPipe's estimated 3D body pose and the Kinect RGB feed cannot validate exact rotation, clubhead or clubface position, impact, or ball flight. The downswing timing ends when the hands pass the approximate address region, not at an observed club–ball strike.
+
+To validate with the physical Kinect, stand fully in frame in a face-on view, select the correct handedness, and record several slow and normal-speed practice swings. Check stage order, finish detection, left/right mirroring, category measurements, and score changes when you deliberately vary head sway, balance, or tempo. Repeat with a briefly obscured wrist and with a longer tracking interruption; no incomplete swing should receive a score. The automated tests use **simulated landmark sequences** and do not establish real-world scoring accuracy.
 
 ## Requirements
 
