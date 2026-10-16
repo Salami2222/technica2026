@@ -25,7 +25,7 @@ const adjust = (suggestion: string): Framing => ({ status: 'Adjust Position', su
 export function assessFraming(exercise: SetupMode, result: PoseLandmarkerResult): Framing {
   const landmarks = result.landmarks[0]
   if (!landmarks?.length) return noFraming
-  if (landmarks.filter(visible).length < 3) return noFraming
+  if (landmarks.slice(11).filter(visible).length < 3) return noFraming
   if (exercise === 'golf') {
     const shoulders = [landmarks[11], landmarks[12]]
     const hips = [landmarks[23], landmarks[24]]
@@ -37,9 +37,8 @@ export function assessFraming(exercise: SetupMode, result: PoseLandmarkerResult)
     if (Math.abs(shoulders[0].x - shoulders[1].x) < 0.06) {
       return adjust('Turn to face the Kinect squarely so it sees both shoulders, not an edge-on view.')
     }
-    const head = landmarks[0]
-    if ((visible(head) && !inside(head)) || Math.min(...shoulders.map((joint) => joint.y)) < 0.15) {
-      return adjust('Step back or aim the Kinect higher so your head stays in frame.')
+    if (Math.min(...shoulders.map((joint) => joint.y)) < 0.15) {
+      return adjust('Step back or aim the Kinect higher to leave space above your shoulders.')
     }
     if (ankles.some((ankle) => !inside(ankle))) return adjust('Step back so both feet stay inside the frame.')
     if ([...shoulders, ...hips, ...wrists.filter(visible)].some((joint) => !inside(joint))) {
@@ -60,10 +59,8 @@ export function assessFraming(exercise: SetupMode, result: PoseLandmarkerResult)
       [a.hip, a.knee, a.ankle, a.shoulder].filter(Boolean).length)[0]
     if (!best.hip || !best.knee || !best.ankle) return adjust('Keep one complete hip, knee, and ankle chain visible. Step back or turn sideways.')
     if (best.ankle.y > 0.94 || best.ankle.x < 0.055 || best.ankle.x > 0.945) return adjust('Move farther from the camera so your feet stay inside the frame.')
-    if (!best.shoulder) return adjust('Include your shoulders and head in the camera view.')
-    // Head points help when available; shoulder clearance provides a lenient proxy otherwise.
-    const head = [0, 7, 8].map((index) => landmarks[index]).find(visible)
-    if ((head && !inside(head)) || (!head && best.shoulder.y < 0.18)) return adjust('Tilt the Kinect up or step back so your head fits in the frame.')
+    if (!best.shoulder) return adjust('Include your shoulders in the camera view.')
+    if (best.shoulder.y < 0.18) return adjust('Tilt the Kinect up or step back to leave space above your shoulders.')
     if ([best.hip, best.knee, best.ankle, best.shoulder].some((joint) => !inside(joint))) return adjust('Move farther from the camera so your full body fits in the frame.')
     return { status: 'Ready', suggestion: 'Full side profile and leg joints are in view.' }
   }

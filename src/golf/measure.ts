@@ -14,8 +14,6 @@ export type GolfSample = {
   shoulderY: number
   hipX: number
   hipY: number
-  ankleX: number | null
-  headX: number | null
   scale: number
   stanceRatio: number | null
   wristSeparation: number | null
@@ -53,11 +51,10 @@ export function measureGolf(result: PoseLandmarkerResult, at: number, handedness
   if (!trailSign && !inSwing) return null
   const handX = wrists.length ? wrists.reduce((sum, wrist) => sum + wrist.x, 0) / wrists.length : null
   const handY = wrists.length ? wrists.reduce((sum, wrist) => sum + wrist.y, 0) / wrists.length : null
-  const headX = visible(points[0]) ? points[0].x : null
   return {
     at, handX, handY,
     shoulderX: shoulders.x, shoulderY: shoulders.y,
-    hipX: hips.x, hipY: hips.y, ankleX: ankles?.x ?? null, headX,
+    hipX: hips.x, hipY: hips.y,
     scale, stanceRatio: ankles ? Math.abs(leftAnkle.x - rightAnkle.x) / scale : null,
     wristSeparation: wrists.length === 2 ? Math.abs(wrists[0].x - wrists[1].x) / scale : null,
     alignment: Math.abs(shoulders.x - hips.x) / scale,
@@ -77,7 +74,6 @@ export function handLift(sample: GolfSample, address: GolfSample): number | null
 
 export function addressLike(sample: GolfSample): boolean {
   return sample.handX !== null && sample.handY !== null &&
-    (sample.stanceRatio === null || sample.stanceRatio >= golfConfig.minStanceRatio) &&
     (sample.handY - sample.shoulderY) * imageYToX > sample.scale * golfConfig.addressHandBelowShoulder &&
     Math.abs(sample.handX - sample.hipX) / sample.scale <= golfConfig.addressHandCenterMax &&
     (sample.wristSeparation === null || sample.wristSeparation <= golfConfig.addressWristSeparationMax) &&

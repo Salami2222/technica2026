@@ -94,3 +94,17 @@ test('golf setup reports missing torso, hands, and feet without requiring a face
   noFeet.landmarks[0][27].visibility = 0
   assert.match(assessFraming('golf', noFeet).suggestion, /both feet/i)
 })
+
+test('face landmark jumps cannot change readiness for any mode', () => {
+  for (const mode of ['squat', 'push-up', 'golf']) {
+    const baseline = mode === 'golf' ? golfPose() : pose(mode)
+    const changed = structuredClone(baseline)
+    for (let index = 0; index <= 10; index++) {
+      changed.landmarks[0][index] = landmark(index % 2 ? -10 : 10, index % 2 ? -10 : 10)
+    }
+    assert.deepEqual(assessFraming(mode, changed), assessFraming(mode, baseline))
+  }
+  const faceOnly = { landmarks: [Array.from({ length: 33 }, (_, index) =>
+    landmark(0.5, 0.5, index < 11 ? 0.9 : 0))] }
+  assert.equal(assessFraming('golf', faceOnly).status, 'Tracking Unavailable')
+})

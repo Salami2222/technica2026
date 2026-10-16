@@ -6,7 +6,7 @@ import { scoreGolfSwing } from '../src/golf/score.ts'
 
 const point = (x, y, visibility = 1, z = 0) => ({ x, y, z, visibility, presence: visibility })
 function pose(handedness, travel = 0, lift = 0, options = {}) {
-  const { headShift = 0, shoulderShift = 0, hipShift = 0, ankleShift = 0, wristVisible = true,
+  const { headShift = 0, shoulderShift = 0, hipShift = 0, ankleShift = 0, ankleSpread = 0, wristVisible = true,
     headVisible = true, wristSpread = 0.016, shoulderScale = 1, ankleVisible = true,
     leftWristVisible = wristVisible, rightWristVisible = wristVisible, handDrop = 0.64,
     shoulderDepth = 0 } = options
@@ -22,8 +22,8 @@ function pose(handedness, travel = 0, lift = 0, options = {}) {
   points[16] = point(handX - wristSpread / 2, handY, rightWristVisible ? 1 : 0.1)
   points[23] = point(0.57 + hipShift * scale, 0.56)
   points[24] = point(0.43 + hipShift * scale, 0.56)
-  points[27] = point(0.6 + ankleShift * scale, 0.88, ankleVisible ? 1 : 0.1)
-  points[28] = point(0.4 + ankleShift * scale, 0.88, ankleVisible ? 1 : 0.1)
+  points[27] = point(0.6 + (ankleShift + ankleSpread / 2) * scale, 0.88, ankleVisible ? 1 : 0.1)
+  points[28] = point(0.4 + (ankleShift - ankleSpread / 2) * scale, 0.88, ankleVisible ? 1 : 0.1)
   return { landmarks: [points], worldLandmarks: [points] }
 }
 
@@ -34,17 +34,27 @@ const path = [
   [-0.83, 0.55], [-0.83, 0.55], [-0.83, 0.55],
 ]
 
-function address(session, handedness, firstAt = 0, frames = 5) {
-  for (let index = 0; index < frames; index++) session.update(pose(handedness), firstAt + index * 100)
+function address(session, handedness, firstAt = 0, frames = 5, options = {}) {
+  for (let index = 0; index < frames; index++) {
+    session.update(pose(handedness, 0, 0, typeof options === 'function' ? options(index) : options), firstAt + index * 100)
+  }
   assert.equal(session.snapshot().status, 'Ready')
   assert.equal(session.snapshot().phase, 'Address')
 }
 
 function swing(session, handedness, firstAt = 600, interval = 100, options = {}) {
   const phases = []
+  const atFrame = (value, index) => typeof value === 'function' ? value(index) : value
   for (const [index, [travel, lift]] of path.entries()) {
-    const movement = index < 10 ? { headShift: options.headShift ?? 0, hipShift: options.hipShift ?? 0 } : {}
-    const snapshot = session.update(pose(handedness, travel, lift, { ...movement, headVisible: options.headVisible ?? true }), firstAt + index * interval)
+    const movement = {
+      headShift: atFrame(options.headShift ?? 0, index),
+      hipShift: index < 10 ? options.hipShift ?? 0 : 0,
+      ankleShift: atFrame(options.ankleShift ?? 0, index),
+      ankleSpread: atFrame(options.ankleSpread ?? 0, index),
+      ankleVisible: atFrame(options.ankleVisible ?? true, index),
+      headVisible: atFrame(options.headVisible ?? true, index),
+    }
+    const snapshot = session.update(pose(handedness, travel, lift, movement), firstAt + index * interval)
     phases.push(snapshot.phase)
   }
   return phases
@@ -130,15 +140,60 @@ test('brief missing wrists pause movement and a long gap discards the swing', ()
   assert.equal(another.snapshot().swings, 0)
 })
 
-test('missing head landmarks do not reduce a score derived from visible upper body', () => {
-  const session = new GolfSwingSession('left')
-  session.start()
-  address(session, 'left')
-  swing(session, 'left', 600, 100, { headVisible: false })
-  const result = session.snapshot().latest
-  assert.ok(result?.score !== null)
-  assert.equal(result.measurements.headTravel, null)
-  assert.match(result.categories[1].explanation, /head motion was excluded/)
+test('missing and wildly shifting face landmarks never change golf phase or scores', () => {
+  const results = [{}, { headVisible: false }, { headShift: (index) => index % 2 ? 50 : -50 }]
+    .map((options) => {
+      const session = new GolfSwingSession('left')
+      session.start()
+      address(session, 'left', 0, 5, (index) => ({
+        headVisible: options.headVisible ?? true,
+        headShift: typeof options.headShift === 'function' ? options.headShift(index) : options.headShift ?? 0,
+      }))
+      const phases = swing(session, 'left', 600, 100, options)
+      return { phases, result: session.snapshot().latest }
+    })
+  assert.ok(results.every(({ result }) => result?.score !== null))
+  assert.deepEqual(results[1], results[0])
+  assert.deepEqual(results[2], results[0])
+  assert.equal(results[0].result.categories[1].name, 'Upper-body stability')
+  assert.doesNotMatch(JSON.stringify(results[0].result), /head|nose|ankle.shift/i)
+})
+
+test('ankle jitter and normal leg rotation do not alter tracking or golf scores', () => {
+  const recordings = [
+    {},
+    { ankleShift: (index) => index % 2 ? 1.2 : -1.2, ankleSpread: (index) => index % 2 ? 0.6 : -0.6 },
+    { ankleVisible: (index) => index < 8 ? false : true },
+  ].map((options) => {
+    const session = new GolfSwingSession('right')
+    session.start()
+    address(session, 'right')
+    const phases = swing(session, 'right', 600, 100, options)
+    return { phases, result: session.snapshot().latest, tracking: session.snapshot().tracking }
+  })
+  for (const recording of recordings) {
+    assert.equal(recording.tracking, 'tracking')
+    assert.ok(recording.phases.includes('Finish'))
+    assert.deepEqual(recording.result, recordings[0].result)
+  }
+})
+
+test('unstable or missing address ankles make stance optional without losing a swing', () => {
+  for (const ankleVisible of [true, false]) {
+    const session = new GolfSwingSession('right')
+    session.start()
+    for (let index = 0; index < 5; index++) {
+      session.update(pose('right', 0, 0, {
+        ankleVisible, ankleSpread: index % 2 ? 0.8 : -0.8,
+      }), index * 100)
+    }
+    assert.equal(session.snapshot().status, 'Ready')
+    swing(session, 'right')
+    const result = session.snapshot().latest
+    assert.ok(result?.score !== null)
+    assert.equal(result.measurements.stanceRatio, null)
+    assert.match(result.categories[0].explanation, /stance width unavailable/i)
+  }
 })
 
 test('pause and resume discard a partial swing and require a new address', () => {
@@ -188,6 +243,8 @@ test('scoring declines when measured tempo changes and refuses insufficient samp
   const insufficient = scoreGolfSwing({ ...input, samples: samples.slice(0, 5), topAt: 1300, passAt: 1500 })
   assert.equal(insufficient.score, null)
   assert.match(insufficient.reason, /Unable to Score/)
+  assert.equal(insufficient.categories.length, 5)
+  assert.ok(insufficient.categories.every((category) => category.score === null))
 })
 
 test('follow-through finishes from observed torso turn after both wrists disappear', () => {

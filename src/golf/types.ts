@@ -1,15 +1,15 @@
 export type Handedness = 'right' | 'left'
 export type GolfPhase = 'Not Ready' | 'Address' | 'Backswing' | 'Top' | 'Downswing' | 'Follow-through' | 'Finish' | 'Tracking Lost'
 export type GolfStatus = 'Idle' | 'Waiting for Address' | 'Ready' | 'Recording' | 'Paused' | 'Completed' | 'Tracking Lost'
-export type GolfCategory = { name: string; score: number; explanation: string; suggestion: string }
+export type GolfCategory = { name: string; score: number | null; explanation: string; suggestion: string }
 export type GolfMeasurements = {
   handBackswing: number
   handFollowThrough: number
-  headTravel: number | null
   shoulderTravel: number
   hipSway: number
-  ankleShift: number
-  stanceRatio: number
+  torsoOffset: number
+  torsoDrift: number
+  stanceRatio: number | null
 }
 export type GolfResult = {
   id: number

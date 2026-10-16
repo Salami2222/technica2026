@@ -8,6 +8,12 @@ const lower = (value: number, full: number, poor: number) => clamp((poor - value
 const higher = (value: number, full: number, poor: number) => clamp((value - poor) / (full - poor))
 const round = (value: number) => Math.round(value * 10) / 10
 const widths = (value: number) => `${round(value)} shoulder widths`
+const percentile = (values: number[], fraction: number) => {
+  const ordered = [...values].sort((a, b) => a - b)
+  return ordered[Math.floor((ordered.length - 1) * fraction)]
+}
+const categoryNames = ['Setup and posture', 'Upper-body stability', 'Balance and lower-body control',
+  'Swing tempo', 'Follow-through and finish']
 
 export function scoreGolfSwing(input: {
   id: number
@@ -28,7 +34,11 @@ export function scoreGolfSwing(input: {
   const downswingMs = passAt - topAt
   const base = { id, handedness, durationMs, backswingMs, downswingMs }
   const fail = (reason: string): GolfResult => ({
-    ...base, score: null, reason, categories: [], measurements: null,
+    ...base, score: null, reason,
+    categories: categoryNames.map((name) => ({
+      name, score: null, explanation: 'Unavailable: too few reliable measurements for this swing.',
+      suggestion: 'Keep your body and hands in view through a complete swing.',
+    })), measurements: null,
     wentWell: [], improve: [],
   })
   if (samples.length < golfConfig.minSwingSamples || finishSamples.length < 3 ||
@@ -39,20 +49,23 @@ export function scoreGolfSwing(input: {
 
   const scale = address.scale
   const handSamples = samples.filter((sample) => sample.handX !== null)
-  const ankleSamples = samples.filter((sample) => sample.ankleX !== null)
-  const stanceRatio = addressSamples.find((sample) => sample.stanceRatio !== null)?.stanceRatio ?? null
-  if (handSamples.length < golfConfig.minSwingSamples * 0.6 ||
-    ankleSamples.length / samples.length < 0.6 || stanceRatio === null) {
-    return fail('Unable to Score: hand path, stance, or lower-body measurements were insufficient.')
+  if (handSamples.length < golfConfig.minSwingSamples * 0.6) {
+    return fail('Unable to Score: too little observed hand travel.')
   }
-  const shoulderTravel = Math.max(...samples.map((sample) => Math.abs(sample.shoulderX - address.shoulderX) / scale))
-  const hipSway = Math.max(...samples.map((sample) => Math.abs(sample.hipX - address.hipX) / scale))
-  const ankleAnchor = addressSamples.find((sample) => sample.ankleX !== null)?.ankleX
-  if (ankleAnchor === null || ankleAnchor === undefined) return fail('Unable to Score: feet were not visible at address.')
-  const ankleShift = Math.max(...ankleSamples.map((sample) => Math.abs(sample.ankleX! - ankleAnchor) / scale))
-  const heads = samples.filter((sample) => sample.headX !== null)
-  const headTravel = address.headX !== null && heads.length / samples.length >= 0.6
-    ? Math.max(...heads.map((sample) => Math.abs(sample.headX! - address.headX!) / scale)) : null
+  // Ankle width can inform address posture, but never becomes a swing-motion signal.
+  const stanceValues = addressSamples.map((sample) => sample.stanceRatio)
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+  const stanceRatio = stanceValues.length >= 3 &&
+    stanceValues.length / addressSamples.length >= 0.6 &&
+    Math.max(...stanceValues) - Math.min(...stanceValues) <= golfConfig.stanceStabilityMax
+    ? percentile(stanceValues, 0.5) : null
+  // A single mislocated landmark should not become the worst observed movement.
+  const shoulderTravel = percentile(samples.map((sample) => Math.abs(sample.shoulderX - address.shoulderX) / scale), 0.8)
+  const hipSway = percentile(samples.map((sample) => Math.abs(sample.hipX - address.hipX) / scale), 0.8)
+  const torsoOffset = percentile(samples.map((sample) =>
+    Math.abs((sample.shoulderX - sample.hipX) - (address.shoulderX - address.hipX)) / scale), 0.8)
+  const torsoDrift = percentile(samples.map((sample) =>
+    Math.abs((sample.shoulderX + sample.hipX - address.shoulderX - address.hipX) / (2 * scale))), 0.8)
   const handBackswing = Math.max(...handSamples.map((sample) => trailTravel(sample, address)!))
   const handFollowThrough = Math.max(...handSamples.map((sample) => -trailTravel(sample, address)!))
   const followLift = Math.max(0, ...samples.map((sample) => handLift(sample, address) ?? 0))
@@ -60,30 +73,31 @@ export function scoreGolfSwing(input: {
   const addressStill = Math.max(range(addressSamples, 'handX'), range(addressSamples, 'handY') * imageYToX) / scale
   const finishStill = Math.max(range(finishSamples, 'shoulderX'), range(finishSamples, 'hipX'), range(finishSamples, 'scale')) / scale
   const ratio = backswingMs / downswingMs
+  const setupMeasures = [lower(address.alignment, ...golfConfig.setupAlignment),
+    lower(addressStill, ...golfConfig.setupStability)]
+  if (stanceRatio !== null) setupMeasures.push(Math.min(
+    higher(stanceRatio, ...golfConfig.stanceRatio),
+    lower(stanceRatio, ...golfConfig.stanceTooWide)))
 
   const categories: GolfCategory[] = [
     {
       name: 'Setup and posture',
-      score: 2 * (lower(address.alignment, ...golfConfig.setupAlignment) +
-        Math.min(higher(stanceRatio, ...golfConfig.stanceRatio),
-          lower(stanceRatio, ...golfConfig.stanceTooWide)) +
-        lower(addressStill, ...golfConfig.setupStability)) / 3,
-      explanation: `Shoulder–hip offset ${widths(address.alignment)}; stance ${round(stanceRatio)}× shoulder width; address movement ${widths(addressStill)}.`,
-      suggestion: 'Set your feet at a comfortable width and settle your hands before starting.',
+      score: 2 * setupMeasures.reduce((sum, value) => sum + value, 0) / setupMeasures.length,
+      explanation: `Shoulder–hip offset ${widths(address.alignment)}; address movement ${widths(addressStill)}; ${stanceRatio === null ? 'stance width unavailable from stable ankle landmarks and excluded' : `stance width ${round(stanceRatio)}× shoulder width`}.`,
+      suggestion: 'Settle into a comfortable, steady address before starting.',
     },
     {
-      name: 'Head and upper-body stability',
-      score: 2 * (headTravel === null
-        ? lower(shoulderTravel, ...golfConfig.shoulderTravel)
-        : (lower(shoulderTravel, ...golfConfig.shoulderTravel) + lower(headTravel, ...golfConfig.headTravel)) / 2),
-      explanation: `Shoulder-center travel ${widths(shoulderTravel)}; ${headTravel === null ? 'head landmarks were insufficient, so head motion was excluded' : `head travel ${widths(headTravel)}`}.`,
-      suggestion: 'Keep your upper body centered as your arms move through the swing.',
+      name: 'Upper-body stability',
+      score: 2 * (lower(shoulderTravel, ...golfConfig.shoulderTravel) +
+        lower(torsoOffset, ...golfConfig.torsoOffset)) / 2,
+      explanation: `Sustained shoulder-center travel ${widths(shoulderTravel)}; torso-offset change ${widths(torsoOffset)}.`,
+      suggestion: 'Keep your upper body controlled as your arms move through the swing.',
     },
     {
       name: 'Balance and lower-body control',
-      score: 2 * (lower(hipSway, ...golfConfig.hipSway) + lower(ankleShift, ...golfConfig.ankleShift)) / 2,
-      explanation: `Hip-center sway ${widths(hipSway)}; ankle-center shift ${widths(ankleShift)}.`,
-      suggestion: 'Stay balanced over your stance and limit excessive lateral hip sway.',
+      score: 2 * (lower(hipSway, ...golfConfig.hipSway) + lower(torsoDrift, ...golfConfig.torsoDrift)) / 2,
+      explanation: `Sustained hip-center drift ${widths(hipSway)}; torso-center drift ${widths(torsoDrift)}. Natural rotation and weight transfer are allowed.`,
+      suggestion: 'Allow natural hip turn and weight transfer while keeping your body centered through the finish.',
     },
     {
       name: 'Swing tempo',
@@ -102,15 +116,16 @@ export function scoreGolfSwing(input: {
       suggestion: 'Continue your hands toward the lead side and hold a balanced finish.',
     },
   ].map((category) => ({ ...category, score: round(category.score) }))
-  const score = round(categories.reduce((sum, category) => sum + category.score, 0))
+  const score = round(categories.reduce((sum, category) => sum + category.score!, 0))
   return {
     ...base, score, reason: null, categories,
     measurements: {
       handBackswing: round(handBackswing), handFollowThrough: round(handFollowThrough),
-      headTravel: headTravel === null ? null : round(headTravel), shoulderTravel: round(shoulderTravel),
-      hipSway: round(hipSway), ankleShift: round(ankleShift), stanceRatio: round(stanceRatio),
+      shoulderTravel: round(shoulderTravel), torsoOffset: round(torsoOffset),
+      hipSway: round(hipSway), torsoDrift: round(torsoDrift),
+      stanceRatio: stanceRatio === null ? null : round(stanceRatio),
     },
-    wentWell: categories.filter((category) => category.score >= 1.5).map((category) => `${category.name}: ${category.explanation}`),
-    improve: categories.filter((category) => category.score < 1.5).map((category) => category.suggestion),
+    wentWell: categories.filter((category) => category.score !== null && category.score >= 1.5).map((category) => `${category.name}: ${category.explanation}`),
+    improve: categories.filter((category) => category.score !== null && category.score < 1.5).map((category) => category.suggestion),
   }
 }

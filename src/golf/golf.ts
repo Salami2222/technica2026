@@ -103,13 +103,13 @@ export class GolfSwingSession {
         this.detail = 'Tracking recovered; resuming from the observed position.'
       }
       this.gapSince = null
-      this.tracking = sample.handX === null || sample.ankleX === null ? 'partial' : 'tracking'
+      this.tracking = sample.handX === null ? 'partial' : 'tracking'
       this.lastSample = sample
       if (recording(this.phase)) this.samples.push(sample)
       return this.snapshot() // A recovered frame never implies motion through the gap.
     }
 
-    this.tracking = sample.handX === null || sample.ankleX === null ? 'partial' : 'tracking'
+    this.tracking = sample.handX === null ? 'partial' : 'tracking'
     this.addressWindow.push(sample)
     this.addressWindow = this.addressWindow.filter((item) => at - item.at <= golfConfig.addressHoldMs + golfConfig.addressHistorySlackMs)
     const settled = this.stableAddress(at)
@@ -279,8 +279,6 @@ export class GolfSwingSession {
       handY: measured.handY === null || previous.handY === null ? measured.handY : blend(measured.handY, previous.handY),
       shoulderX: blend(measured.shoulderX, previous.shoulderX),
       hipX: blend(measured.hipX, previous.hipX),
-      ankleX: measured.ankleX === null || previous.ankleX === null ? measured.ankleX : blend(measured.ankleX, previous.ankleX),
-      headX: measured.headX === null || previous.headX === null ? measured.headX : blend(measured.headX, previous.headX),
     }
   }
 
