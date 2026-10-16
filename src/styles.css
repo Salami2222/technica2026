@@ -443,3 +443,30 @@ footer span { margin: 0 9px; color: #b14353; }
   .golf-feedback { grid-template-columns: 1fr; }
   .golf-system { flex-wrap: wrap; }
 }
+
+/* Scored exercise sessions keep the camera and live phase in view. */
+.form-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 11px; scrollbar-color: #713642 #1a1518; }
+.form-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.form-top strong { color: #ff5b70; font: 700 25px 'Space Grotesk'; white-space: nowrap; }
+.form-top strong small { color: #bba7ad; font-size: 12px; }
+.form-coach { margin: 2px 0 8px; color: #d8c0c5; font-size: 11px; line-height: 1.3; }
+.form-result-label { border-top: 1px solid #493039; padding-top: 6px; color: #f19aaa; font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+.form-unavailable { margin: 5px 0; color: #d2acb5; font-size: 10px; line-height: 1.3; }
+.form-categories details { border-top: 1px solid #3b3034; padding: 4px 0; }
+.form-categories summary { display: flex; justify-content: space-between; gap: 8px; color: #f2e9eb; font-size: 11px; cursor: pointer; list-style: none; }
+.form-categories summary::-webkit-details-marker { display: none; }
+.form-categories summary span:before { content: '▸'; color: #ff7182; margin-right: 6px; }
+.form-categories details[open] summary span:before { content: '▾'; }
+.form-categories summary b { color: #ff7182; white-space: nowrap; }
+.form-categories p, .form-feedback p, .form-summary p { margin: 4px 0; color: #cbb8bd; font-size: 10px; line-height: 1.35; }
+.form-feedback, .form-history, .form-summary { border-top: 1px solid #493039; margin-top: 6px; padding-top: 6px; }
+.form-feedback b, .form-summary b { color: #ff8897; }
+.form-history > div { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.form-history button { padding: 3px 7px; border: 1px solid #594049; background: #21191d; color: #e9cdd3; font-size: 10px; cursor: pointer; }
+.form-history button.active, .form-history button:hover { border-color: #ff7182; color: #fff; }
+.exercise-system { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 9px; border: 1px solid #3b3034; background: #171619; padding: 6px 9px; color: #b6a4aa; font-size: 10px; }
+.exercise-system b { color: #ff8493; }
+@media (max-width: 1000px), (max-height: 650px) {
+  .form-panel { max-height: 420px; overflow-y: auto; }
+  .exercise-system { grid-column: 1 / -1; }
+}

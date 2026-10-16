@@ -4,23 +4,26 @@ import { GolfSwingSession } from '../src/golf/golf.ts'
 import { measureGolf } from '../src/golf/measure.ts'
 import { scoreGolfSwing } from '../src/golf/score.ts'
 
-const point = (x, y, visibility = 1) => ({ x, y, z: 0, visibility, presence: visibility })
+const point = (x, y, visibility = 1, z = 0) => ({ x, y, z, visibility, presence: visibility })
 function pose(handedness, travel = 0, lift = 0, options = {}) {
-  const { headShift = 0, shoulderShift = 0, hipShift = 0, ankleShift = 0, wristVisible = true, headVisible = true, wristSpread = 0.016 } = options
+  const { headShift = 0, shoulderShift = 0, hipShift = 0, ankleShift = 0, wristVisible = true,
+    headVisible = true, wristSpread = 0.016, shoulderScale = 1, ankleVisible = true,
+    leftWristVisible = wristVisible, rightWristVisible = wristVisible, handDrop = 0.64,
+    shoulderDepth = 0 } = options
   const points = Array.from({ length: 33 }, () => point(0, 0, 0))
   const scale = 0.2
   const sign = handedness === 'right' ? -1 : 1
   const handX = 0.5 + sign * travel * scale
-  const handY = 0.64 - lift * scale
+  const handY = handDrop - lift * scale
   points[0] = point(0.5 + headShift * scale, 0.18, headVisible ? 1 : 0.1)
-  points[11] = point(0.6 + shoulderShift * scale, 0.35)
-  points[12] = point(0.4 + shoulderShift * scale, 0.35)
-  points[15] = point(handX + wristSpread / 2, handY, wristVisible ? 1 : 0.1)
-  points[16] = point(handX - wristSpread / 2, handY, wristVisible ? 1 : 0.1)
+  points[11] = point(0.5 + 0.1 * shoulderScale + shoulderShift * scale, 0.35, 1, shoulderDepth / 2)
+  points[12] = point(0.5 - 0.1 * shoulderScale + shoulderShift * scale, 0.35, 1, -shoulderDepth / 2)
+  points[15] = point(handX + wristSpread / 2, handY, leftWristVisible ? 1 : 0.1)
+  points[16] = point(handX - wristSpread / 2, handY, rightWristVisible ? 1 : 0.1)
   points[23] = point(0.57 + hipShift * scale, 0.56)
   points[24] = point(0.43 + hipShift * scale, 0.56)
-  points[27] = point(0.6 + ankleShift * scale, 0.88)
-  points[28] = point(0.4 + ankleShift * scale, 0.88)
+  points[27] = point(0.6 + ankleShift * scale, 0.88, ankleVisible ? 1 : 0.1)
+  points[28] = point(0.4 + ankleShift * scale, 0.88, ankleVisible ? 1 : 0.1)
   return { landmarks: [points], worldLandmarks: [points] }
 }
 
@@ -123,7 +126,7 @@ test('brief missing wrists pause movement and a long gap discards the swing', ()
   another.update(pose('right', 0.35), 600)
   another.update(pose('right', 0.8), 700)
   another.missing(750)
-  assert.equal(another.missing(1200).tracking, 'lost')
+  assert.equal(another.missing(1500).tracking, 'lost')
   assert.equal(another.snapshot().swings, 0)
 })
 
@@ -185,4 +188,85 @@ test('scoring declines when measured tempo changes and refuses insufficient samp
   const insufficient = scoreGolfSwing({ ...input, samples: samples.slice(0, 5), topAt: 1300, passAt: 1500 })
   assert.equal(insufficient.score, null)
   assert.match(insufficient.reason, /Unable to Score/)
+})
+
+test('follow-through finishes from observed torso turn after both wrists disappear', () => {
+  for (const hand of ['right', 'left']) {
+    const session = new GolfSwingSession(hand)
+    session.start()
+    address(session, hand)
+    for (let index = 0; index <= 10; index++) session.update(pose(hand, ...path[index]), 600 + index * 100)
+    assert.equal(session.snapshot().phase, 'Follow-through')
+    let partial = false
+    for (let index = 11; index < path.length; index++) {
+      const state = session.update(pose(hand, ...path[index], { wristVisible: false, ankleVisible: false, shoulderScale: 0.7 }), 600 + index * 100)
+      partial ||= state.tracking === 'partial'
+    }
+    assert.equal(partial, true)
+    assert.equal(session.snapshot().phase, 'Finish')
+    assert.equal(session.snapshot().swings, 1)
+    assert.notEqual(session.snapshot().latest?.score, null)
+  }
+})
+
+test('wrists can reappear after partial follow-through without restarting the swing', () => {
+  const session = new GolfSwingSession('right')
+  session.start()
+  address(session, 'right')
+  for (let index = 0; index <= 10; index++) session.update(pose('right', ...path[index]), 600 + index * 100)
+  for (let index = 11; index <= 13; index++) {
+    assert.equal(session.update(pose('right', ...path[index], { wristVisible: false, shoulderScale: 0.75 }), 600 + index * 100).tracking, 'partial')
+  }
+  for (let index = 14; index < path.length; index++) session.update(pose('right', ...path[index], { shoulderScale: 0.75 }), 600 + index * 100)
+  assert.equal(session.snapshot().swings, 1)
+  assert.equal(session.snapshot().phase, 'Finish')
+})
+
+test('address accepts natural hand spacing and brief ankle or wrist occlusion', () => {
+  const session = new GolfSwingSession('left')
+  session.start()
+  session.update(pose('left', 0, 0, { wristSpread: 0.08, handDrop: 0.61 }), 0)
+  session.update(pose('left', 0.06, 0, { wristSpread: 0.08, handDrop: 0.61, ankleVisible: false, rightWristVisible: false }), 80)
+  session.update(pose('left', 0, 0, { wristVisible: false, ankleVisible: false }), 160)
+  session.update(pose('left', 0.05, 0, { wristSpread: 0.08, handDrop: 0.61 }), 240)
+  assert.equal(session.snapshot().status, 'Ready')
+})
+
+test('torso rotation alone cannot complete an unobserved follow-through', () => {
+  const session = new GolfSwingSession('right')
+  session.start()
+  address(session, 'right')
+  for (let index = 0; index <= 9; index++) session.update(pose('right', ...path[index]), 600 + index * 100)
+  for (let index = 10; index < path.length; index++) {
+    session.update(pose('right', ...path[index], { wristVisible: false, shoulderScale: 0.7 }), 600 + index * 100)
+  }
+  assert.equal(session.snapshot().swings, 0)
+})
+
+test('brief backswing hand occlusion preserves the phase and resumes from observed hands', () => {
+  const session = new GolfSwingSession('right')
+  session.start()
+  address(session, 'right')
+  session.update(pose('right', 0.35, 0.1), 600)
+  session.update(pose('right', 0.55, 0.2), 700)
+  assert.equal(session.update(pose('right', 0.75, 0.35, { wristVisible: false, shoulderScale: 0.85 }), 800).phase, 'Backswing')
+  assert.equal(session.snapshot().tracking, 'partial')
+  assert.equal(session.update(pose('right', 0.9, 0.6), 900).phase, 'Backswing')
+  assert.equal(session.snapshot().swings, 0)
+  for (let index = 4; index < path.length; index++) session.update(pose('right', ...path[index]), 600 + index * 100)
+  assert.equal(session.snapshot().swings, 1)
+})
+
+test('near edge-on shoulders remain observable through depth separation at finish', () => {
+  const session = new GolfSwingSession('right')
+  session.start()
+  address(session, 'right')
+  for (let index = 0; index <= 10; index++) session.update(pose('right', ...path[index]), 600 + index * 100)
+  for (let index = 11; index < path.length; index++) {
+    session.update(pose('right', ...path[index], {
+      wristVisible: false, shoulderScale: 0.03, shoulderDepth: 0.08,
+    }), 600 + index * 100)
+  }
+  assert.equal(session.snapshot().phase, 'Finish')
+  assert.equal(session.snapshot().swings, 1)
 })

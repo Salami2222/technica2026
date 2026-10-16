@@ -1,6 +1,6 @@
 import type { PoseLandmarkerResult } from '@mediapipe/tasks-vision'
 import { golfConfig } from './config.ts'
-import { addressLike, handLift, imageYToX, measureGolf, range, trailTravel } from './measure.ts'
+import { addressLike, handLift, imageYToX, measureGolf, range, torsoTurn, trailTravel } from './measure.ts'
 import type { GolfSample } from './measure.ts'
 import { scoreGolfSwing } from './score.ts'
 import type { GolfPhase, GolfResult, GolfSnapshot, GolfStatus, Handedness } from './types.ts'
@@ -22,6 +22,7 @@ export class GolfSwingSession {
   private finishWindow: GolfSample[] = []
   private lastSample: GolfSample | null = null
   private gapSince: number | null = null
+  private handOcclusionSince: number | null = null
   private missingMs = 0
   private startAt = 0
   private peakAt = 0
@@ -79,15 +80,18 @@ export class GolfSwingSession {
 
   update(result: PoseLandmarkerResult, at: number): GolfSnapshot {
     if (!this.active()) return this.snapshot()
-    const measured = measureGolf(result, at, this.handedness)
+    const measured = measureGolf(result, at, this.handedness, recording(this.phase))
     if (!measured) return this.missing(at)
     const sample = this.smooth(measured)
 
     if (this.gapSince !== null) {
       const prior = this.lastSample
       const continuous = prior !== null && at - prior.at <= golfConfig.maxTrackingGapMs &&
-        Math.abs(sample.handX - prior.handX) / prior.scale <= golfConfig.maxRecoveryHandJump &&
-        Math.abs(sample.hipX - prior.hipX) / prior.scale <= golfConfig.maxRecoveryHandJump
+        (sample.handX === null || prior.handX === null ||
+          Math.abs(sample.handX - prior.handX) / prior.scale <=
+            golfConfig.maxRecoveryHandJump + (at - prior.at) * golfConfig.maxRecoveryHandSpeedPerMs) &&
+        Math.abs(sample.hipX - prior.hipX) / prior.scale <= golfConfig.maxRecoveryHandJump &&
+        Math.abs(sample.shoulderX - prior.shoulderX) / prior.scale <= golfConfig.maxRecoveryHandJump
       if (!continuous) {
         this.abortSwing()
         this.status = 'Tracking Lost'
@@ -99,21 +103,21 @@ export class GolfSwingSession {
         this.detail = 'Tracking recovered; resuming from the observed position.'
       }
       this.gapSince = null
-      this.tracking = 'tracking'
+      this.tracking = sample.handX === null || sample.ankleX === null ? 'partial' : 'tracking'
       this.lastSample = sample
       if (recording(this.phase)) this.samples.push(sample)
       return this.snapshot() // A recovered frame never implies motion through the gap.
     }
 
-    this.tracking = 'tracking'
+    this.tracking = sample.handX === null || sample.ankleX === null ? 'partial' : 'tracking'
     this.addressWindow.push(sample)
-    this.addressWindow = this.addressWindow.filter((item) => at - item.at <= golfConfig.addressHoldMs)
+    this.addressWindow = this.addressWindow.filter((item) => at - item.at <= golfConfig.addressHoldMs + golfConfig.addressHistorySlackMs)
     const settled = this.stableAddress(at)
 
     if (this.status === 'Waiting for Address' || this.status === 'Tracking Lost' || this.phase === 'Finish') {
       if (settled) {
         this.resetSwingOnly()
-        this.address = sample
+        this.address = [...this.addressWindow].reverse().find(addressLike) ?? sample
         this.addressSamples = [...this.addressWindow]
         this.phase = 'Address'
         this.status = 'Ready'
@@ -131,8 +135,33 @@ export class GolfSwingSession {
 
     const address = this.address
     if (!address) return this.snapshot()
-    const trail = trailTravel(sample, address)
-    const previousTrail = this.lastSample ? trailTravel(this.lastSample, address) : 0
+    if (sample.handX === null) {
+      if (recording(this.phase)) {
+        this.handOcclusionSince ??= at
+        const maxOcclusion = this.phase === 'Follow-through' ? golfConfig.maxFollowOcclusionMs : golfConfig.maxTrackingGapMs
+        const torsoContinuous = this.lastSample !== null && at - this.lastSample.at <= golfConfig.maxTrackingGapMs &&
+          Math.abs(sample.shoulderX - this.lastSample.shoulderX) / address.scale <= golfConfig.maxRecoveryHandJump &&
+          Math.abs(sample.hipX - this.lastSample.hipX) / address.scale <= golfConfig.maxRecoveryHandJump
+        if (!torsoContinuous || at - this.handOcclusionSince > maxOcclusion) {
+          this.abortSwing()
+          this.phase = 'Tracking Lost'
+          this.status = 'Tracking Lost'
+          this.tracking = 'lost'
+          this.detail = 'Torso or hands were obscured too long to verify the swing. Return to address.'
+          return this.snapshot()
+        }
+        this.samples.push(sample)
+        if (this.phase === 'Follow-through') this.finishCandidate(sample, address, at)
+        else this.missingMs += at - this.lastSample!.at
+        if (this.status === 'Recording') this.detail = 'Hands partially obstructed; phase held while observed torso movement continues.'
+        this.lastSample = sample
+        return this.snapshot()
+      }
+      return this.missing(at)
+    }
+    this.handOcclusionSince = null
+    const trail = trailTravel(sample, address)!
+    const previousTrail = this.lastSample ? trailTravel(this.lastSample, address) ?? trail : 0
     if (this.phase === 'Address') {
       if (trail >= golfConfig.backswingStart && trail - previousTrail >= golfConfig.movementStep) {
         this.phase = 'Backswing'
@@ -171,28 +200,7 @@ export class GolfSwingSession {
           this.detail = 'Hands passed the address region; continue into the finish.'
         }
       } else if (this.phase === 'Follow-through') {
-        const candidate = -trail >= golfConfig.finishLeadTravel && handLift(sample, address) >= golfConfig.finishLift
-        if (!candidate) this.finishWindow = []
-        else {
-          this.finishWindow.push(sample)
-          if (this.finishWindow.length > 1 &&
-            Math.max(range(this.finishWindow, 'handX'), range(this.finishWindow, 'handY') * imageYToX) / address.scale > golfConfig.finishStill) {
-            this.finishWindow = [sample]
-          }
-          if (this.finishWindow.length >= 3 && at - this.finishWindow[0].at >= golfConfig.finishHoldMs) {
-            this.phase = 'Finish'
-            this.status = 'Waiting for Address'
-            const scored = scoreGolfSwing({
-              id: this.history.length + 1, handedness: this.handedness, address,
-              addressSamples: this.addressSamples, samples: this.samples, finishSamples: this.finishWindow,
-              startAt: this.startAt, topAt: this.topAt, passAt: this.passAt, finishAt: at,
-              missingMs: this.missingMs,
-            })
-            this.history.push(scored)
-            this.detail = scored.score === null ? scored.reason! : `Swing ${scored.id} scored ${scored.score.toFixed(1)} / 10. Return to address for another.`
-            this.addressWindow = []
-          }
-        }
+        this.finishCandidate(sample, address, at)
       }
     }
     this.lastSample = sample
@@ -225,10 +233,38 @@ export class GolfSwingSession {
   private stableAddress(at: number): boolean {
     const window = this.addressWindow
     if (window.length < 3 || at - window[0].at < golfConfig.addressHoldMs) return false
-    if (!window.every(addressLike)) return false
+    const withHands = window.filter(addressLike)
+    if (withHands.length < 2 || withHands.length / window.length < 0.5) return false
     const scale = window[0].scale
-    return Math.max(range(window, 'handX'), range(window, 'handY') * imageYToX) / scale <= golfConfig.addressHandStill &&
+    return Math.max(range(withHands, 'handX'), range(withHands, 'handY') * imageYToX) / scale <= golfConfig.addressHandStill &&
       Math.max(range(window, 'shoulderX'), range(window, 'hipX')) / scale <= golfConfig.addressTorsoStill
+  }
+
+  private finishCandidate(sample: GolfSample, address: GolfSample, at: number): void {
+    const leadTravel = Math.max(0, ...this.samples.map((item) => -(trailTravel(item, address) ?? 0)))
+    const handFinish = (trailTravel(sample, address) ?? 0) <= -golfConfig.finishLeadTravel &&
+      (handLift(sample, address) ?? 0) >= golfConfig.finishLift
+    const bodyFinish = leadTravel >= golfConfig.finishObservedHandTravel &&
+      torsoTurn(sample, address) >= golfConfig.finishTorsoTurn
+    if (!handFinish && !bodyFinish) { this.finishWindow = []; return }
+    this.finishWindow.push(sample)
+    const torsoStill = Math.max(range(this.finishWindow, 'shoulderX'), range(this.finishWindow, 'hipX'), range(this.finishWindow, 'scale')) / address.scale
+    const visibleHands = this.finishWindow.filter((item) => item.handX !== null)
+    const handStill = visibleHands.length > 1 ?
+      Math.max(range(visibleHands, 'handX'), range(visibleHands, 'handY') * imageYToX) / address.scale : 0
+    if (Math.max(torsoStill, handStill) > golfConfig.finishStill) this.finishWindow = [sample]
+    if (this.finishWindow.length < 3 || at - this.finishWindow[0].at < golfConfig.finishHoldMs) return
+    this.phase = 'Finish'
+    this.status = 'Waiting for Address'
+    const scored = scoreGolfSwing({
+      id: this.history.length + 1, handedness: this.handedness, address,
+      addressSamples: this.addressSamples, samples: this.samples, finishSamples: this.finishWindow,
+      startAt: this.startAt, topAt: this.topAt, passAt: this.passAt, finishAt: at,
+      missingMs: this.missingMs,
+    })
+    this.history.push(scored)
+    this.detail = scored.score === null ? scored.reason! : `Swing ${scored.id} scored ${scored.score.toFixed(1)} / 10. Return to address for another.`
+    this.addressWindow = []
   }
 
   private smooth(measured: GolfSample): GolfSample {
@@ -239,11 +275,11 @@ export class GolfSwingSession {
     const blend = (current: number, prior: number) => prior + alpha * (current - prior)
     return {
       ...measured,
-      handX: blend(measured.handX, previous.handX),
-      handY: blend(measured.handY, previous.handY),
+      handX: measured.handX === null || previous.handX === null ? measured.handX : blend(measured.handX, previous.handX),
+      handY: measured.handY === null || previous.handY === null ? measured.handY : blend(measured.handY, previous.handY),
       shoulderX: blend(measured.shoulderX, previous.shoulderX),
       hipX: blend(measured.hipX, previous.hipX),
-      ankleX: blend(measured.ankleX, previous.ankleX),
+      ankleX: measured.ankleX === null || previous.ankleX === null ? measured.ankleX : blend(measured.ankleX, previous.ankleX),
       headX: measured.headX === null || previous.headX === null ? measured.headX : blend(measured.headX, previous.headX),
     }
   }
@@ -257,6 +293,7 @@ export class GolfSwingSession {
     this.topAt = 0
     this.passAt = 0
     this.missingMs = 0
+    this.handOcclusionSince = null
   }
 
   private abortSwing(): void {

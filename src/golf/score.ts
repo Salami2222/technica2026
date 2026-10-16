@@ -1,5 +1,5 @@
 import { golfConfig } from './config.ts'
-import { handLift, imageYToX, range, trailTravel } from './measure.ts'
+import { handLift, imageYToX, range, torsoTurn, trailTravel } from './measure.ts'
 import type { GolfSample } from './measure.ts'
 import type { GolfCategory, GolfResult, Handedness } from './types.ts'
 
@@ -38,27 +38,37 @@ export function scoreGolfSwing(input: {
   }
 
   const scale = address.scale
+  const handSamples = samples.filter((sample) => sample.handX !== null)
+  const ankleSamples = samples.filter((sample) => sample.ankleX !== null)
+  const stanceRatio = addressSamples.find((sample) => sample.stanceRatio !== null)?.stanceRatio ?? null
+  if (handSamples.length < golfConfig.minSwingSamples * 0.6 ||
+    ankleSamples.length / samples.length < 0.6 || stanceRatio === null) {
+    return fail('Unable to Score: hand path, stance, or lower-body measurements were insufficient.')
+  }
   const shoulderTravel = Math.max(...samples.map((sample) => Math.abs(sample.shoulderX - address.shoulderX) / scale))
   const hipSway = Math.max(...samples.map((sample) => Math.abs(sample.hipX - address.hipX) / scale))
-  const ankleShift = Math.max(...samples.map((sample) => Math.abs(sample.ankleX - address.ankleX) / scale))
+  const ankleAnchor = addressSamples.find((sample) => sample.ankleX !== null)?.ankleX
+  if (ankleAnchor === null || ankleAnchor === undefined) return fail('Unable to Score: feet were not visible at address.')
+  const ankleShift = Math.max(...ankleSamples.map((sample) => Math.abs(sample.ankleX! - ankleAnchor) / scale))
   const heads = samples.filter((sample) => sample.headX !== null)
   const headTravel = address.headX !== null && heads.length / samples.length >= 0.6
     ? Math.max(...heads.map((sample) => Math.abs(sample.headX! - address.headX!) / scale)) : null
-  const handBackswing = Math.max(...samples.map((sample) => trailTravel(sample, address)))
-  const handFollowThrough = Math.max(...samples.map((sample) => -trailTravel(sample, address)))
-  const finishLift = Math.max(...finishSamples.map((sample) => handLift(sample, address)))
+  const handBackswing = Math.max(...handSamples.map((sample) => trailTravel(sample, address)!))
+  const handFollowThrough = Math.max(...handSamples.map((sample) => -trailTravel(sample, address)!))
+  const followLift = Math.max(0, ...samples.map((sample) => handLift(sample, address) ?? 0))
+  const finishTurn = Math.max(...finishSamples.map((sample) => torsoTurn(sample, address)))
   const addressStill = Math.max(range(addressSamples, 'handX'), range(addressSamples, 'handY') * imageYToX) / scale
-  const finishStill = Math.max(range(finishSamples, 'handX'), range(finishSamples, 'handY') * imageYToX) / scale
+  const finishStill = Math.max(range(finishSamples, 'shoulderX'), range(finishSamples, 'hipX'), range(finishSamples, 'scale')) / scale
   const ratio = backswingMs / downswingMs
 
   const categories: GolfCategory[] = [
     {
       name: 'Setup and posture',
       score: 2 * (lower(address.alignment, ...golfConfig.setupAlignment) +
-        Math.min(higher(address.stanceRatio, ...golfConfig.stanceRatio),
-          lower(address.stanceRatio, ...golfConfig.stanceTooWide)) +
+        Math.min(higher(stanceRatio, ...golfConfig.stanceRatio),
+          lower(stanceRatio, ...golfConfig.stanceTooWide)) +
         lower(addressStill, ...golfConfig.setupStability)) / 3,
-      explanation: `Shoulder–hip offset ${widths(address.alignment)}; stance ${round(address.stanceRatio)}× shoulder width; address movement ${widths(addressStill)}.`,
+      explanation: `Shoulder–hip offset ${widths(address.alignment)}; stance ${round(stanceRatio)}× shoulder width; address movement ${widths(addressStill)}.`,
       suggestion: 'Set your feet at a comfortable width and settle your hands before starting.',
     },
     {
@@ -85,9 +95,10 @@ export function scoreGolfSwing(input: {
     {
       name: 'Follow-through and finish',
       score: 2 * (higher(handFollowThrough, ...golfConfig.finishTravel) +
-        higher(finishLift, ...golfConfig.finishLiftScore) +
-        lower(finishStill, ...golfConfig.finishStability)) / 3,
-      explanation: `Lead-side hand travel ${widths(handFollowThrough)}; lift ${widths(finishLift)}; finish movement ${widths(finishStill)}.`,
+        higher(followLift, ...golfConfig.finishLiftScore) +
+        higher(finishTurn, ...golfConfig.finishTurnScore) +
+        lower(finishStill, ...golfConfig.finishStability)) / 4,
+      explanation: `Observed lead-side hand travel ${widths(handFollowThrough)}; lift ${widths(followLift)}; torso turn ${round(finishTurn)}; finish movement ${widths(finishStill)}.`,
       suggestion: 'Continue your hands toward the lead side and hold a balanced finish.',
     },
   ].map((category) => ({ ...category, score: round(category.score) }))
@@ -97,7 +108,7 @@ export function scoreGolfSwing(input: {
     measurements: {
       handBackswing: round(handBackswing), handFollowThrough: round(handFollowThrough),
       headTravel: headTravel === null ? null : round(headTravel), shoulderTravel: round(shoulderTravel),
-      hipSway: round(hipSway), ankleShift: round(ankleShift), stanceRatio: round(address.stanceRatio),
+      hipSway: round(hipSway), ankleShift: round(ankleShift), stanceRatio: round(stanceRatio),
     },
     wentWell: categories.filter((category) => category.score >= 1.5).map((category) => `${category.name}: ${category.explanation}`),
     improve: categories.filter((category) => category.score < 1.5).map((category) => category.suggestion),

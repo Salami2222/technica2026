@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PoseLandmarker } from '@mediapipe/tasks-vision'
+import type { PoseLandmarker, PoseLandmarkerResult } from '@mediapipe/tasks-vision'
 import { createExerciseDetector, exerciseModes } from './exercises'
 import type { ExerciseId } from './exercises'
 import { notReady } from './analysis/types.ts'
@@ -10,6 +10,7 @@ import type { SessionStatus } from './session/session.ts'
 import { GolfSwingSession } from './golf/golf.ts'
 import type { GolfStatus, Handedness } from './golf/types.ts'
 import { GolfDashboard } from './golf/GolfDashboard.tsx'
+import { FormDashboard } from './form/FormDashboard.tsx'
 
 type BridgeStatus = { connected: boolean; state?: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount?: number }
 type ViewState = 'loading' | 'waiting' | 'tracking' | 'partial' | 'lost' | 'no-pose' | 'error'
@@ -56,6 +57,7 @@ export default function App() {
   const latestSwingCountRef = useRef(0)
   const [golfSnapshot, setGolfSnapshot] = useState(() => golfRef.current.snapshot())
   const [selectedSwingId, setSelectedSwingId] = useState<number | null>(null)
+  const [selectedFormRep, setSelectedFormRep] = useState<number | null>(null)
   const detectorRef = useRef<ExerciseDetector | null>(null)
   detectorRef.current ??= createExerciseDetector('squat')
   const sessionRef = useRef<ExerciseSession | null>(null)
@@ -72,7 +74,12 @@ export default function App() {
   const selectExercise = (id: ModeId) => {
     if (id === exerciseId || isSessionOpen) return
     modeRef.current = id
-    if (id !== 'golf') detectorRef.current = createExerciseDetector(id)
+    if (id !== 'golf') {
+      detectorRef.current = createExerciseDetector(id)
+      sessionRef.current = new ExerciseSession(id)
+      setSessionSnapshot(sessionRef.current.snapshot())
+      setSelectedFormRep(null)
+    }
     setPhaseSnapshot(notReady())
     setExerciseId(id)
   }
@@ -90,6 +97,7 @@ export default function App() {
     setPhaseSnapshot(notReady())
     sessionRef.current = new ExerciseSession(exerciseId)
     setSessionSnapshot(sessionRef.current.start())
+    setSelectedFormRep(null)
   }
 
   const pauseOrResume = () => {
@@ -112,8 +120,8 @@ export default function App() {
     let frames = 0
     let fpsStarted = performance.now()
 
-    const observeSession = (snapshot: PhaseSnapshot, timestampMs: number) => {
-      setSessionSnapshot(sessionRef.current!.observe(snapshot, timestampMs))
+    const observeSession = (snapshot: PhaseSnapshot, timestampMs: number, pose?: PoseLandmarkerResult) => {
+      setSessionSnapshot(sessionRef.current!.observe(snapshot, timestampMs, pose))
     }
     const observeMissing = (timestampMs: number) => {
       if (modeRef.current === 'golf') {
@@ -242,7 +250,7 @@ export default function App() {
           } else {
             const snapshot = detectorRef.current!.update(result, timestamp)
             setPhaseSnapshot(snapshot)
-            observeSession(snapshot, timestamp)
+            observeSession(snapshot, timestamp, result)
             setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
           }
           lastDetectorCheck = timestamp
@@ -351,7 +359,8 @@ export default function App() {
             </div>
             {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
           </div>
-          <div className="panel status-panel"><div className="panel-label">SYSTEM STATUS</div><div className={`status-icon ${bridgeState === 'recovering' ? 'recovering' : viewState}`}><span /></div><h2>{statusText}</h2><p>{bridgeMessage ?? (viewState === 'tracking' ? 'Required joints are visible and angles are updating.' : viewState === 'partial' ? 'Holding the last phase until reliable joints return.' : viewState === 'lost' ? 'Required joints have been unavailable for over 2 seconds.' : viewState === 'no-pose' ? 'Show the required joints to begin tracking.' : viewState === 'loading' ? 'Preparing the 33-point pose model.' : viewState === 'waiting' ? 'The bridge is searching for RGB frames.' : 'Check the message below and retry.')}</p><div className="status-rows"><div><span>Kinect feed</span><b className={bridgeConnected ? 'good' : 'muted'}>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : bridgeState === 'starting' ? 'Starting' : 'Offline'}</b></div><div><span>Pose model</span><b className={modelReady ? 'good' : 'muted'}>{modelReady ? 'Ready' : 'Loading'}</b></div><div><span>Capture restarts</span><b>{restartCount}</b></div></div></div>
+          <FormDashboard session={sessionSnapshot} selectedRep={selectedFormRep} onSelectRep={setSelectedFormRep} />
+          <div className="exercise-system"><span>{statusText}</span><span>Kinect <b>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : 'Offline'}</b></span><span>Pose <b>{modelReady ? 'Ready' : 'Loading'}</b></span><span>Restarts <b>{restartCount}</b></span></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
           </>}
         </aside>
