@@ -2,7 +2,9 @@
 // These are starting values for physical Kinect calibration, not biomechanical standards.
 export const golfConfig = {
   minVisibility: 0.40,
+  minWorldTorsoLength: 0.08,
   positionSmoothingMs: 70,
+  armSmoothingMs: 90,
   addressHoldMs: 200,
   addressHistorySlackMs: 120,
   addressHandStill: 0.28,
@@ -30,13 +32,21 @@ export const golfConfig = {
   maxMissingFraction: 0.20,
   maxSwingMs: 6000,
   // Full-credit and zero-credit bands used by the five measured score categories.
-  setupAlignment: [0.12, 0.55],
-  setupStability: [0.10, 0.40],
-  stanceRatio: [0.85, 0.45],
-  stanceTooWide: [1.45, 2.20],
+  setupAlignment: [0.28, 0.95],
+  setupStability: [0.26, 0.65],
+  stanceRatio: [0.70, 0.30],
+  stanceTooWide: [1.85, 2.70],
   stanceStabilityMax: 0.25,
-  shoulderTravel: [0.15, 0.65],
-  torsoOffset: [0.25, 0.90],
+  // Estimated world-pose arm bands; calibrate using physical Kinect recordings.
+  minArmCoverage: 0.55,
+  minLeadSamples: 5,
+  minTrailSamples: 3,
+  leadExtension: [158, 125],
+  trailFlexion: [65, 145, 40, 172],
+  trailHipDistance: [1.00, 2.10],
+  trailTorsoDistance: [0.55, 1.55],
+  shoulderTravel: [0.55, 1.35],
+  torsoOffset: [0.70, 1.60],
   // Broad pilot bands: measured torso drift must be sustained before lower-body credit falls.
   hipSway: [0.35, 1.10],
   torsoDrift: [0.30, 1.00],

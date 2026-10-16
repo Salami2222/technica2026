@@ -1,4 +1,5 @@
 import type { GolfResult, GolfSnapshot, Handedness } from './types.ts'
+import { clubPathAssessment } from './path.ts'
 
 type Props = {
   snapshot: GolfSnapshot
@@ -46,17 +47,18 @@ export function GolfDashboard({ snapshot, result, handedness, sessionOpen, conne
     <section className="panel golf-result" aria-label="Golf swing results">
       {result ? <>
         <div className="golf-result-head"><div><span className="panel-label">SWING {result.id} · {result.handedness.toUpperCase()}-HANDED</span><h2>{result.score === null ? 'Unable to Score' : <>{result.score.toFixed(1)} <small>/ 10</small></>}</h2></div><span>{seconds(result.durationMs)} total{scoreChange !== null && <> · {scoreChange >= 0 ? '+' : ''}{scoreChange.toFixed(1)} vs prior</>}</span></div>
-        {result.score === null ? <p className="golf-unscored">{result.reason}</p> :
-          <div className="golf-timing"><span>Backswing <b>{seconds(result.backswingMs)}</b></span><span>Downswing <b>{seconds(result.downswingMs)}</b></span><span>Hand path <b>{result.measurements!.handBackswing} / {result.measurements!.handFollowThrough}× shoulder width</b></span></div>}
+        {result.score === null && <p className="golf-unscored">{result.reason}</p>}
+        {result.measurements && <div className="golf-timing"><span>Backswing <b>{seconds(result.backswingMs)}</b></span><span>Downswing <b>{seconds(result.downswingMs)}</b></span><span>Hand travel proxy <b>{result.measurements.handBackswing} / {result.measurements.handFollowThrough}× shoulder width</b></span></div>}
         <div className="golf-category-list">{result.categories.map((category) => <details key={category.name}>
           <summary><span>{category.name}</span><b>{category.score === null ? 'N/A' : `${category.score.toFixed(1)} / 2`}</b></summary>
           <p>{category.explanation}</p><p>{category.suggestion}</p>
         </details>)}</div>
-        {result.score !== null && <>
-          <div className="golf-feedback"><div><b>What went well</b><p>{result.wentWell.length ? result.wentWell.join(' · ') : 'No category reached 1.5 / 2 in this swing.'}</p></div><div><b>Next swing</b><p>{result.improve.length ? result.improve.slice(0, 2).join(' ') : 'Repeat the measured movement and aim for the same balance and tempo.'}</p></div></div>
+        {result.measurements && <>
+          <div className="golf-feedback"><div><b>What went well</b><p>{result.wentWell.length ? result.wentWell.join(' · ') : 'The available measurements did not establish a strong positive category.'}</p></div><div><b>Next swing</b><p>{result.improve.length ? result.improve.slice(0, 2).join(' ') : 'Observed metrics look reasonable; repeat the swing to check consistency.'}</p></div></div>
           <div className="golf-measures">Hip drift {result.measurements!.hipSway}× · torso drift {result.measurements!.torsoDrift}× · shoulder travel {result.measurements!.shoulderTravel}×</div>
         </>}
       </> : <div className="golf-setup"><span className="panel-label">SWING RESULTS</span><h2>Your next swing appears here</h2><p>Open Setup / Reference above the camera to check your position, then start a session and hold a steady address. Recorded practice swings and scores will appear in this panel.</p><p>Scores estimate visible body movement from one RGB camera. Clubhead, clubface, exact impact, and ball flight are not measured.</p></div>}
+      <p className="golf-path-status"><b>{clubPathAssessment.label}.</b> {clubPathAssessment.explanation}</p>
       {snapshot.history.length > 0 && <div className="golf-history"><span className="panel-label">THIS SESSION</span><div>{snapshot.history.map((swing) => <button type="button" key={swing.id} onClick={() => onSelectSwing(swing.id)}>#{swing.id} {swing.score === null ? 'N/A' : swing.score.toFixed(1)}</button>)}<button type="button" onClick={() => onSelectSwing(null)}>Latest</button></div></div>}
     </section>
     <div className="golf-system"><span>Kinect <b>{connected ? 'Connected' : 'Offline'}</b></span><span>Pose <b>{modelReady ? 'Ready' : 'Loading'}</b></span><span>Tracking <b>{snapshot.tracking}</b></span></div>

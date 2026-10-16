@@ -20,12 +20,55 @@ export type GolfSample = {
   alignment: number
   trailSign: number
   shoulderDepth: number
+  leadElbowAngle: number | null
+  trailElbowAngle: number | null
+  trailElbowHipDistance: number | null
+  trailElbowTorsoDistance: number | null
 }
 
 const mid = (a: Point, b: Point) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
 const visible = (point?: Point): point is Point => !!point && Number.isFinite(point.x) &&
   Number.isFinite(point.y) && Number.isFinite(point.z) && (point.visibility ?? 0) >= golfConfig.minVisibility &&
   (point.presence ?? 1) >= golfConfig.minVisibility
+const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+const angle = (shoulder: Point, elbow: Point, wrist: Point): number | null => {
+  const a = [shoulder.x - elbow.x, shoulder.y - elbow.y, shoulder.z - elbow.z]
+  const b = [wrist.x - elbow.x, wrist.y - elbow.y, wrist.z - elbow.z]
+  const size = Math.hypot(...a) * Math.hypot(...b)
+  return size < 1e-6 ? null : Math.acos(Math.max(-1, Math.min(1,
+    a.reduce((sum, value, index) => sum + value * b[index], 0) / size))) * 180 / Math.PI
+}
+
+function armMeasurements(points: Point[] | undefined, handedness: Handedness) {
+  const lead = handedness === 'right' ? [11, 13, 15] : [12, 14, 16]
+  const trail = handedness === 'right' ? [12, 14, 16, 24] : [11, 13, 15, 23]
+  const leadPoints = lead.map((index) => points?.[index])
+  const trailPoints = trail.map((index) => points?.[index])
+  const leadElbowAngle = leadPoints.every(visible)
+    ? angle(leadPoints[0]!, leadPoints[1]!, leadPoints[2]!) : null
+  if (!trailPoints.every(visible)) return {
+    leadElbowAngle, trailElbowAngle: null, trailElbowHipDistance: null, trailElbowTorsoDistance: null,
+  }
+  const [shoulder, elbow, wrist, hip] = trailPoints as Point[]
+  const torsoLength = distance(shoulder, hip)
+  if (torsoLength < golfConfig.minWorldTorsoLength) return {
+    leadElbowAngle, trailElbowAngle: null, trailElbowHipDistance: null, trailElbowTorsoDistance: null,
+  }
+  const torso = [hip.x - shoulder.x, hip.y - shoulder.y, hip.z - shoulder.z]
+  const elbowFromShoulder = [elbow.x - shoulder.x, elbow.y - shoulder.y, elbow.z - shoulder.z]
+  const projection = Math.max(0, Math.min(1,
+    torso.reduce((sum, value, index) => sum + value * elbowFromShoulder[index], 0) / torsoLength ** 2))
+  const nearest = {
+    x: shoulder.x + projection * torso[0], y: shoulder.y + projection * torso[1],
+    z: shoulder.z + projection * torso[2],
+  }
+  return {
+    leadElbowAngle,
+    trailElbowAngle: angle(shoulder, elbow, wrist),
+    trailElbowHipDistance: distance(elbow, hip) / torsoLength,
+    trailElbowTorsoDistance: distance(elbow, nearest) / torsoLength,
+  }
+}
 
 export function measureGolf(result: PoseLandmarkerResult, at: number, handedness: Handedness, inSwing = false): GolfSample | null {
   const points = result.landmarks[0]
@@ -51,6 +94,9 @@ export function measureGolf(result: PoseLandmarkerResult, at: number, handedness
   if (!trailSign && !inSwing) return null
   const handX = wrists.length ? wrists.reduce((sum, wrist) => sum + wrist.x, 0) / wrists.length : null
   const handY = wrists.length ? wrists.reduce((sum, wrist) => sum + wrist.y, 0) / wrists.length : null
+  // MediaPipe world landmarks are estimated 3D positions; absent or low-confidence
+  // arm joints remain unavailable rather than being filled from prior frames.
+  const arms = armMeasurements(result.worldLandmarks?.[0], handedness)
   return {
     at, handX, handY,
     shoulderX: shoulders.x, shoulderY: shoulders.y,
@@ -59,6 +105,7 @@ export function measureGolf(result: PoseLandmarkerResult, at: number, handedness
     wristSeparation: wrists.length === 2 ? Math.abs(wrists[0].x - wrists[1].x) / scale : null,
     alignment: Math.abs(shoulders.x - hips.x) / scale,
     trailSign, shoulderDepth: depthWidth / Math.max(scale, 0.04),
+    ...arms,
   }
 }
 

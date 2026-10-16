@@ -272,13 +272,20 @@ export class GolfSwingSession {
     if (!previous || this.gapSince !== null) return measured
     const elapsed = Math.max(1, measured.at - previous.at)
     const alpha = 1 - Math.exp(-elapsed / golfConfig.positionSmoothingMs)
+    const armAlpha = 1 - Math.exp(-elapsed / golfConfig.armSmoothingMs)
     const blend = (current: number, prior: number) => prior + alpha * (current - prior)
+    const blendArm = (current: number | null, prior: number | null) =>
+      current === null || prior === null ? current : prior + armAlpha * (current - prior)
     return {
       ...measured,
       handX: measured.handX === null || previous.handX === null ? measured.handX : blend(measured.handX, previous.handX),
       handY: measured.handY === null || previous.handY === null ? measured.handY : blend(measured.handY, previous.handY),
       shoulderX: blend(measured.shoulderX, previous.shoulderX),
       hipX: blend(measured.hipX, previous.hipX),
+      leadElbowAngle: blendArm(measured.leadElbowAngle, previous.leadElbowAngle),
+      trailElbowAngle: blendArm(measured.trailElbowAngle, previous.trailElbowAngle),
+      trailElbowHipDistance: blendArm(measured.trailElbowHipDistance, previous.trailElbowHipDistance),
+      trailElbowTorsoDistance: blendArm(measured.trailElbowTorsoDistance, previous.trailElbowTorsoDistance),
     }
   }
 

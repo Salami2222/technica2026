@@ -10,6 +10,10 @@ export type GolfMeasurements = {
   torsoOffset: number
   torsoDrift: number
   stanceRatio: number | null
+  leadElbowAngle: number | null
+  trailElbowAngle: number | null
+  trailElbowHipDistance: number | null
+  trailElbowTorsoDistance: number | null
 }
 export type GolfResult = {
   id: number

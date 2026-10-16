@@ -3,13 +3,15 @@ import assert from 'node:assert/strict'
 import { GolfSwingSession } from '../src/golf/golf.ts'
 import { measureGolf } from '../src/golf/measure.ts'
 import { scoreGolfSwing } from '../src/golf/score.ts'
+import { clubPathAssessment } from '../src/golf/path.ts'
 
 const point = (x, y, visibility = 1, z = 0) => ({ x, y, z, visibility, presence: visibility })
 function pose(handedness, travel = 0, lift = 0, options = {}) {
   const { headShift = 0, shoulderShift = 0, hipShift = 0, ankleShift = 0, ankleSpread = 0, wristVisible = true,
     headVisible = true, wristSpread = 0.016, shoulderScale = 1, ankleVisible = true,
     leftWristVisible = wristVisible, rightWristVisible = wristVisible, handDrop = 0.64,
-    shoulderDepth = 0 } = options
+    shoulderDepth = 0, leadBend = 0.06, trailBend = 0.20, trailElbowGap = 0,
+    leadElbowVisible = true, trailElbowVisible = true } = options
   const points = Array.from({ length: 33 }, () => point(0, 0, 0))
   const scale = 0.2
   const sign = handedness === 'right' ? -1 : 1
@@ -24,6 +26,17 @@ function pose(handedness, travel = 0, lift = 0, options = {}) {
   points[24] = point(0.43 + hipShift * scale, 0.56)
   points[27] = point(0.6 + (ankleShift + ankleSpread / 2) * scale, 0.88, ankleVisible ? 1 : 0.1)
   points[28] = point(0.4 + (ankleShift - ankleSpread / 2) * scale, 0.88, ankleVisible ? 1 : 0.1)
+  for (const [shoulderIndex, elbowIndex, wristIndex, bend, gap, isLead] of [
+    [11, 13, 15, handedness === 'right' ? leadBend : trailBend, handedness === 'right' ? 0 : trailElbowGap, handedness === 'right'],
+    [12, 14, 16, handedness === 'left' ? leadBend : trailBend, handedness === 'left' ? 0 : trailElbowGap, handedness === 'left'],
+  ]) {
+    const shoulder = points[shoulderIndex], wrist = points[wristIndex]
+    const dx = wrist.x - shoulder.x, dy = wrist.y - shoulder.y
+    const outward = shoulderIndex === 11 ? 1 : -1
+    points[elbowIndex] = point((shoulder.x + wrist.x) / 2 - dy * bend + outward * gap * scale,
+      (shoulder.y + wrist.y) / 2 + dx * bend,
+      (isLead ? leadElbowVisible : trailElbowVisible) ? 1 : 0.1)
+  }
   return { landmarks: [points], worldLandmarks: [points] }
 }
 
@@ -53,6 +66,13 @@ function swing(session, handedness, firstAt = 600, interval = 100, options = {})
       ankleSpread: atFrame(options.ankleSpread ?? 0, index),
       ankleVisible: atFrame(options.ankleVisible ?? true, index),
       headVisible: atFrame(options.headVisible ?? true, index),
+      leadBend: atFrame(options.leadBend ?? 0.06, index),
+      trailBend: atFrame(options.trailBend ?? 0.20, index),
+      trailElbowGap: atFrame(options.trailElbowGap ?? 0, index),
+      leadElbowVisible: atFrame(options.leadElbowVisible ?? true, index),
+      trailElbowVisible: atFrame(options.trailElbowVisible ?? true, index),
+      shoulderScale: atFrame(options.shoulderScale ?? 1, index),
+      shoulderDepth: atFrame(options.shoulderDepth ?? 0, index),
     }
     const snapshot = session.update(pose(handedness, travel, lift, movement), firstAt + index * interval)
     phases.push(snapshot.phase)
@@ -155,7 +175,7 @@ test('missing and wildly shifting face landmarks never change golf phase or scor
   assert.ok(results.every(({ result }) => result?.score !== null))
   assert.deepEqual(results[1], results[0])
   assert.deepEqual(results[2], results[0])
-  assert.equal(results[0].result.categories[1].name, 'Upper-body stability')
+  assert.equal(results[0].result.categories[1].name, 'Arm mechanics')
   assert.doesNotMatch(JSON.stringify(results[0].result), /head|nose|ankle.shift/i)
 })
 
@@ -326,4 +346,87 @@ test('near edge-on shoulders remain observable through depth separation at finis
   }
   assert.equal(session.snapshot().phase, 'Finish')
   assert.equal(session.snapshot().swings, 1)
+})
+
+function scoredSwing(handedness, options = {}) {
+  const session = new GolfSwingSession(handedness)
+  session.start()
+  address(session, handedness, 0, 5, options.addressOptions ?? {})
+  swing(session, handedness, 600, 100, options)
+  return session.snapshot().latest
+}
+
+test('lead-arm extension uses the correct elbow and rejects sustained bend before estimated strike', () => {
+  for (const handedness of ['right', 'left']) {
+    const straight = scoredSwing(handedness)
+    const bent = scoredSwing(handedness, { leadBend: 0.48 })
+    assert.ok(straight.score !== null && bent.score !== null)
+    assert.ok(straight.measurements.leadElbowAngle > bent.measurements.leadElbowAngle + 35)
+    assert.ok(straight.categories[1].score > bent.categories[1].score)
+    assert.match(bent.categories[1].suggestion, /Lead elbow angle/)
+    const nearTop = scoredSwing(handedness, { leadBend: (index) => index >= 3 && index <= 7 ? 0.48 : 0.06 })
+    assert.ok(nearTop.measurements.leadElbowAngle < straight.measurements.leadElbowAngle - 20)
+    const followOnly = scoredSwing(handedness, { leadBend: (index) => index >= 10 ? 0.48 : 0.06 })
+    assert.equal(followOnly.measurements.leadElbowAngle, straight.measurements.leadElbowAngle)
+  }
+})
+
+test('trail-elbow delivery compares visible elbow to its own hip and torso', () => {
+  for (const handedness of ['right', 'left']) {
+    const connected = scoredSwing(handedness)
+    const separated = scoredSwing(handedness, { trailElbowGap: (index) => index >= 6 && index <= 10 ? 1.6 : 0 })
+    assert.ok(connected.score !== null && separated.score !== null)
+    assert.ok(separated.measurements.trailElbowHipDistance > connected.measurements.trailElbowHipDistance)
+    assert.ok(separated.measurements.trailElbowTorsoDistance > connected.measurements.trailElbowTorsoDistance)
+    assert.ok(connected.categories[1].score > separated.categories[1].score)
+    assert.match(separated.categories[1].suggestion, /Trail elbow measured/)
+  }
+})
+
+test('minor accepted address adjustments and simulated torso rotation retain fair scores', () => {
+  const baseline = scoredSwing('right')
+  const adjusted = scoredSwing('right', { addressOptions: (index) => ({
+    handDrop: 0.64 + (index % 2 ? 0.004 : 0),
+    shoulderShift: index % 2 ? 0.025 : 0,
+  }) })
+  const rotated = scoredSwing('right', {
+    shoulderScale: (index) => index > 3 && index < 13 ? 0.75 : 1,
+    shoulderDepth: (index) => index > 3 && index < 13 ? 0.08 : 0,
+  })
+  assert.ok(adjusted.categories[0].score >= 1.5)
+  assert.ok(rotated.categories[2].score >= baseline.categories[2].score - 0.2)
+  assert.doesNotMatch(adjusted.improve.join(' '), /Settle into a comfortable/)
+})
+
+test('brief arm occlusion is excluded, while missing or low-confidence arm coverage is unavailable', () => {
+  const baseline = scoredSwing('right')
+  const brief = scoredSwing('right', { leadElbowVisible: (index) => index !== 3 && index !== 7 })
+  assert.ok(brief.score !== null)
+  assert.ok(brief.measurements.leadElbowAngle >= baseline.measurements.leadElbowAngle - 4)
+  const missingLead = scoredSwing('right', { leadElbowVisible: false })
+  assert.equal(missingLead.categories[1].score, null)
+  assert.equal(missingLead.measurements.leadElbowAngle, null)
+  assert.equal(missingLead.score, null)
+  assert.ok(missingLead.categories[0].score !== null)
+  assert.match(missingLead.categories[1].explanation, /Trail Elbow Delivery: \d/)
+  const missingTrail = scoredSwing('left', { trailElbowVisible: (index) => index < 6 || index > 10 })
+  assert.equal(missingTrail.categories[1].score, null)
+  assert.equal(missingTrail.measurements.trailElbowAngle, null)
+  assert.equal(missingTrail.score, null)
+  const noWorld = pose('right')
+  noWorld.worldLandmarks = []
+  const bodyOnly = measureGolf(noWorld, 0, 'right')
+  assert.ok(bodyOnly)
+  assert.equal(bodyOnly.leadElbowAngle, null)
+  assert.equal(bodyOnly.trailElbowHipDistance, null)
+})
+
+test('club path is unavailable without clubhead and target-line evidence and never changes score', () => {
+  assert.equal(clubPathAssessment.status, 'unavailable')
+  assert.equal(clubPathAssessment.label, 'Club path unavailable with current tracking')
+  assert.match(clubPathAssessment.explanation, /clubhead direction relative to a target line/)
+  const result = scoredSwing('right')
+  assert.ok(result.score >= 0 && result.score <= 10)
+  assert.equal(result.categories.length, 5)
+  assert.equal(result.score, Math.round(result.categories.reduce((total, category) => total + category.score, 0) * 10) / 10)
 })
