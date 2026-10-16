@@ -11,6 +11,8 @@ import { GolfSwingSession } from './golf/golf.ts'
 import type { GolfStatus, Handedness } from './golf/types.ts'
 import { GolfDashboard } from './golf/GolfDashboard.tsx'
 import { FormDashboard } from './form/FormDashboard.tsx'
+import { CameraGuide } from './setup/CameraGuide.tsx'
+import { assessFraming, noFraming } from './setup/framing.ts'
 
 type BridgeStatus = { connected: boolean; state?: 'starting' | 'connected' | 'recovering' | 'stopped'; sequence: number; error: string | null; restartCount?: number }
 type ViewState = 'loading' | 'waiting' | 'tracking' | 'partial' | 'lost' | 'no-pose' | 'error'
@@ -58,6 +60,7 @@ export default function App() {
   const [golfSnapshot, setGolfSnapshot] = useState(() => golfRef.current.snapshot())
   const [selectedSwingId, setSelectedSwingId] = useState<number | null>(null)
   const [selectedFormRep, setSelectedFormRep] = useState<number | null>(null)
+  const [framing, setFraming] = useState(noFraming)
   const detectorRef = useRef<ExerciseDetector | null>(null)
   detectorRef.current ??= createExerciseDetector('squat')
   const sessionRef = useRef<ExerciseSession | null>(null)
@@ -81,6 +84,7 @@ export default function App() {
       setSelectedFormRep(null)
     }
     setPhaseSnapshot(notReady())
+    setFraming(noFraming)
     setExerciseId(id)
   }
 
@@ -148,6 +152,7 @@ export default function App() {
           setBridgeMessage(status.connected ? null : status.error)
           setRestartCount(status.restartCount ?? 0)
           if (!status.connected) {
+            setFraming(noFraming)
             setViewState('waiting')
             if (modeRef.current === 'golf') setGolfSnapshot(golfRef.current.missing(performance.now()))
             else {
@@ -163,6 +168,7 @@ export default function App() {
         } catch {
           if (active) {
             setBridgeConnected(false)
+            setFraming(noFraming)
             setBridgeState('offline')
             setBridgeMessage('Kinect bridge is unavailable. Start python3 backend/server.py in a separate terminal.')
             setViewState('error')
@@ -248,6 +254,7 @@ export default function App() {
             setGolfSnapshot(snapshot)
             setViewState(snapshot.tracking === 'tracking' ? 'tracking' : snapshot.tracking === 'partial' ? 'partial' : snapshot.tracking === 'lost' ? 'lost' : 'no-pose')
           } else {
+            setFraming(assessFraming(modeRef.current as ExerciseId, result))
             const snapshot = detectorRef.current!.update(result, timestamp)
             setPhaseSnapshot(snapshot)
             observeSession(snapshot, timestamp, result)
@@ -360,6 +367,7 @@ export default function App() {
             {phaseSnapshot.side && <small>Using {phaseSnapshot.side} side landmarks</small>}
           </div>
           <FormDashboard session={sessionSnapshot} selectedRep={selectedFormRep} onSelectRep={setSelectedFormRep} />
+          <CameraGuide exercise={exerciseId as ExerciseId} framing={framing} />
           <div className="exercise-system"><span>{statusText}</span><span>Kinect <b>{bridgeConnected ? 'Connected' : bridgeState === 'recovering' ? 'Recovering' : 'Offline'}</b></span><span>Pose <b>{modelReady ? 'Ready' : 'Loading'}</b></span><span>Restarts <b>{restartCount}</b></span></div>
           {error && <div className="error-panel" role="alert"><strong>Connection or tracking error</strong><p>{error}</p></div>}
           </>}

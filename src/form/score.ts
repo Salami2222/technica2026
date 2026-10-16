@@ -11,7 +11,7 @@ const category = (name: string, score: number | null, explanation: string, sugge
 const unavailable = 'Unavailable: too few reliable landmarks during this repetition.'
 const enough = (count: number, total: number, minimum = 3) => count >= minimum && count / total >= formConfig.minCoverage
 
-function motionControl(samples: readonly FormSample[]): { reversals: number; speedRatio: number } | null {
+export function motionControl(samples: readonly FormSample[]): { reversals: number; speedRatio: number } | null {
   const speeds: number[] = []
   let direction = 0
   let reversals = 0
@@ -32,7 +32,7 @@ function motionControl(samples: readonly FormSample[]): { reversals: number; spe
   return { reversals: Math.max(0, reversals - 1), speedRatio: Math.max(...speeds) / Math.max(median, 0.001) }
 }
 
-function hipJitter(samples: readonly FormSample[]): number | null {
+export function hipJitter(samples: readonly FormSample[]): number | null {
   const hip = samples.filter((sample) => sample.hipX !== null && sample.torsoScale !== null)
   if (!enough(hip.length, samples.length) || hip.length < 4) return null
   const residuals: number[] = []
